@@ -47,7 +47,8 @@ class Ndds2Coco:
             categories: dictionary for classification of objects named unique tag
         """
         self.info = coco_info()
-        self.images = pd.DataFrame()
+        self.images  = pd.DataFrame()
+        self.df_ndds = pd.DataFrame()
         self.instances = {}
         self.ignore_jsons = ["_camera_settings.json", "_object_settings.json"]
         logger.debug("Set instance: Ndds2Coco.")
@@ -69,7 +70,10 @@ class Ndds2Coco:
         return json_files
 
 
-    def set_base_parameter(self, dirpath: str, n_files: int = 100, instance_merge: dict = None, visibility_threshold = 0.2):
+    def set_base_parameter(
+        self, dirpath: str, n_files: int = 100, instance_merge: dict = None, 
+        visibility_threshold = 0.2, extra_pixel_x: int = 0, extra_pixel_y: int = 0, 
+    ):
         """
         ## Precondition ###########################
         ## All NDDS object's tag named unique !!
@@ -102,9 +106,12 @@ class Ndds2Coco:
 
         # json files
         files = self.__get_json_files(dirpath)
+        count_file = 0
+        list_df = []
         for i in np.random.permutation(np.arange(len(files))):
             # json file read
             fjson = json.load(open(files[i]))
+            logger.info(f"open file: {files[i]}")
 
             # image file read
             img_cs = cv2.cvtColor(cv2.imread(files[i].replace(".json", ".cs.png")), cv2.COLOR_BGR2GRAY)
@@ -114,47 +121,60 @@ class Ndds2Coco:
                 if dictwk["visibility"] < visibility_threshold: continue
                 x = dictwk["projected_cuboid_centroid"][0]
                 y = dictwk["projected_cuboid_centroid"][1]
-                se = pd.Series(dtype=object)
-                se["file_name"]              = files[i]
-                se["category_name"]          = dictwk["class"]
+                logger.debug(f'fname: {os.path.basename(files[i])}, class: {dictwk["class"]}, visibility: {dictwk["visibility"]}, center: {(int(y), int(x), )}')
+                listwk = None
+                x1, x2  = (int(x) + -1 * extra_pixel_x), (int(x) + extra_pixel_x+1)
+                y1, y2  = (int(y) + -1 * extra_pixel_y), (int(y) + extra_pixel_y+1)
+                x1 = x1 if x1 >= 0 else 0
+                y1 = y1 if y1 >= 0 else 0
+                x2 = x2 if x2 <= img_cs.shape[1] else img_cs.shape[1]
+                y2 = y2 if y2 <= img_cs.shape[0] else img_cs.shape[0]
                 try:
-                    se["segmentation_color"] = img_cs[int(y), int(x)]
+                    listwk = img_cs[y1:y2, x1:x2].reshape(-1).tolist()
                 except IndexError:
                     ## objectの中心が画面の外にはみ出してindex error になる場合があるのでその場合は省く
+                    logger.warning("search range is out of images.")
                     continue
-                ## 背景色も判断するために画面の端もsampleする.
-                se["segmentation_color_end"] = img_cs[0, 0]
+                if len(listwk) == 0: continue
+                dfwk = pd.DataFrame(listwk, columns=["segmentation_color"])
+                dfwk["file_name"]     = files[i]
+                dfwk["category_name"] = dictwk["class"]
 
-                df = df.append(se, ignore_index=True)
-            if df.shape[0] > n_files: break
+                ## 背景色も判断するために画面の端もsampleする.
+                dfwk["segmentation_color_end"] = img_cs[0, 0]
+                list_df.append(dfwk.copy())
+
+            count_file += 1
+            if n_files is not None and count_file > n_files: break
             
         # 解析
+        df = pd.concat(list_df, ignore_index=True, sort=False, axis=0)
         for x in ["segmentation_color","segmentation_color_end"]: df[x] = df[x].astype(np.uint8)
+        self.df_ndds = df.copy()
         ## 色のパターン
-        dict_color = {x:None for x in np.unique(np.append(df["segmentation_color"].values, df["segmentation_color_end"].values))}
+        dict_color = {x:None for x in df["category_name"].unique()}
         ## 背景色
         se = df["segmentation_color_end"].value_counts().sort_values(ascending=False)
-        dict_color[se.index[0]] = "__bg"
+        dict_color["__bg"] = se.index[0]
         logger.info(f"back ground color: {se.index[0]}")
         ## object color
-        se = df.groupby("category_name")["segmentation_color"].value_counts()
-        se = se.sort_values(ascending=False)
-        for _index in se.index:
-            if dict_color[_index[1]] is None:
-                dict_color[_index[1]] = _index[0]
-                logger.info(f"{_index[0]} color: {_index[1]}")
-        ## 埋まらない色が一種類の場合
-        if (np.array(list(dict_color.values())) == None).sum() == 1:
-            ndf = df["category_name"].unique()
-            name  = ndf[~np.isin(ndf, list(dict_color.values()))][0]
-            for x in dict_color.keys():
-                if dict_color[x] is None: dict_color[x] = name
+        se = df.groupby("segmentation_color")["category_name"].value_counts()
+        se.name = "count"
+        dfwk = se.reset_index().copy().sort_values(["segmentation_color", "count"], ascending=False)
+        se = dfwk.groupby("segmentation_color").size().sort_values(ascending=True) # あるオブジェクトの周りにある色を集めて、category_nameの候補が少ない順にソートする
+        for seg_color in se.index:
+            dfwkwk = dfwk.loc[(dfwk["segmentation_color"] == seg_color), :]
+            for i_loc, cat_name in enumerate(dfwkwk["category_name"].values):
+                if dict_color.get(cat_name) is None:
+                    dict_color[cat_name] = seg_color
+                    logger.info(f'{cat_name} color: {seg_color} count:{dfwkwk["count"].iloc[i_loc]}')
+                    break
+        logger.info(f"\r\n{dict_color}")
         ## それでも埋まらない色がある場合はエラー
         if (np.array(list(dict_color.values())) == None).sum() > 0:
             raise Exception(f"We can't fill segmentation color.")
 
         # category 化
-        dict_color = {dict_color[x]:x for x in dict_color.keys()}
         if instance_merge is not None:
             for x in instance_merge.keys():
                 self.instances[x] = []
@@ -277,7 +297,7 @@ class Ndds2Coco:
         """
         logger.debug("START")
 
-        os.makedirs(correct_dirpath(dirpath), exist_ok=True)
+        makedirs(dirpath, exist_ok=True, remake=True)
         ndf = self.images["image_name"].unique()
         for x in ndf[ np.random.permutation(np.arange(ndf.shape[0]))[:n_images] ]:
             img = self.draw_infomation(x)

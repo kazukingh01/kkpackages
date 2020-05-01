@@ -5,24 +5,25 @@ from typing import List
 
 # detectron2
 import detectron2
-from detectron2.utils.logger import setup_logger
-setup_logger()
 from detectron2.engine import DefaultTrainer, DefaultPredictor
 from detectron2.data import build_detection_train_loader
-from detectron2.utils.visualizer import Visualizer
-from detectron2.utils.visualizer import ColorMode
+from detectron2.data.datasets import register_coco_instances
 from detectron2.config import get_cfg
 from detectron2 import model_zoo
+from detectron2.utils.visualizer import Visualizer
+from detectron2.utils.visualizer import ColorMode
 from detectron2.utils.logger import setup_logger
 setup_logger()
 
-# my modules
-from myimagemods.util.common import makedirs
-from myimagemods.lib.coco import coco_info, CocoManager
+# local package
+from kkimagemods.util.common import makedirs
+from kkimagemods.lib.coco import coco_info, CocoManager
 
 
 class MyDet2(DefaultTrainer):
-    def __init__(self, train_dataset_name="dummy", test_dataset_name=None, cfg=None, mapper=None, weight_path=None, threshold=0.2, max_iter=100):
+    def __init__(self, train_dataset_name, coco_json_path, image_root, test_dataset_name=None, cfg=None, mapper=None, weight_path=None, threshold=0.2, max_iter=100):
+        # Coco dataset setting
+        register_coco_instances(train_dataset_name, {}, coco_json_path, image_root) # この関数で内部のDatasetCatalog, MetadataCatalogにCoco情報をset している
         self.cfg = cfg if cfg is not None else self.set_config(train_dataset_name, test_dataset_name=test_dataset_name, max_iter=max_iter)
         os.makedirs(self.cfg.OUTPUT_DIR, exist_ok=True) # この宣言は先にする
         if weight_path is None:
