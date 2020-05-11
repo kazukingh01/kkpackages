@@ -8,7 +8,6 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-build/
 develop-eggs/
 dist/
 downloads/
@@ -23,6 +22,7 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+bdist.linux-x86_64/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
