@@ -12,9 +12,9 @@ import json, datetime, glob, os, shutil, sys
 from typing import List
 
 # my package
-from kkimagemods.util.common import correct_dirpath, check_type, makedirs
-from kkimagemods.util.logger import set_looger
-logger = set_looger(__name__)
+from kkimagemods.util.common import correct_dirpath, check_type, makedirs, get_file_list
+from kkimagemods.util.logger import set_logger
+logger = set_logger(__name__)
 
 def coco_info(
         description: str = "my coco dataset.",
@@ -47,7 +47,8 @@ class Ndds2Coco:
             categories: dictionary for classification of objects named unique tag
         """
         self.info = coco_info()
-        self.images = pd.DataFrame()
+        self.images  = pd.DataFrame()
+        self.df_ndds = pd.DataFrame()
         self.instances = {}
         self.ignore_jsons = ["_camera_settings.json", "_object_settings.json"]
         logger.debug("Set instance: Ndds2Coco.")
@@ -69,7 +70,10 @@ class Ndds2Coco:
         return json_files
 
 
-    def set_base_parameter(self, dirpath: str, n_files: int = 100, instance_merge: dict = None, visibility_threshold = 0.2):
+    def set_base_parameter(
+        self, dirpath: str, n_files: int = 100, instance_merge: dict = None, 
+        visibility_threshold = 0.2, extra_pixel_x: int = 0, extra_pixel_y: int = 0, 
+    ):
         """
         ## Precondition ###########################
         ## All NDDS object's tag named unique !!
@@ -102,9 +106,12 @@ class Ndds2Coco:
 
         # json files
         files = self.__get_json_files(dirpath)
+        count_file = 0
+        list_df = []
         for i in np.random.permutation(np.arange(len(files))):
             # json file read
             fjson = json.load(open(files[i]))
+            logger.info(f"open file: {files[i]}")
 
             # image file read
             img_cs = cv2.cvtColor(cv2.imread(files[i].replace(".json", ".cs.png")), cv2.COLOR_BGR2GRAY)
@@ -114,47 +121,60 @@ class Ndds2Coco:
                 if dictwk["visibility"] < visibility_threshold: continue
                 x = dictwk["projected_cuboid_centroid"][0]
                 y = dictwk["projected_cuboid_centroid"][1]
-                se = pd.Series(dtype=object)
-                se["file_name"]              = files[i]
-                se["category_name"]          = dictwk["class"]
+                logger.debug(f'fname: {os.path.basename(files[i])}, class: {dictwk["class"]}, visibility: {dictwk["visibility"]}, center: {(int(y), int(x), )}')
+                listwk = None
+                x1, x2  = (int(x) + -1 * extra_pixel_x), (int(x) + extra_pixel_x+1)
+                y1, y2  = (int(y) + -1 * extra_pixel_y), (int(y) + extra_pixel_y+1)
+                x1 = x1 if x1 >= 0 else 0
+                y1 = y1 if y1 >= 0 else 0
+                x2 = x2 if x2 <= img_cs.shape[1] else img_cs.shape[1]
+                y2 = y2 if y2 <= img_cs.shape[0] else img_cs.shape[0]
                 try:
-                    se["segmentation_color"] = img_cs[int(y), int(x)]
+                    listwk = img_cs[y1:y2, x1:x2].reshape(-1).tolist()
                 except IndexError:
                     ## objectの中心が画面の外にはみ出してindex error になる場合があるのでその場合は省く
+                    logger.warning("search range is out of images.")
                     continue
-                ## 背景色も判断するために画面の端もsampleする.
-                se["segmentation_color_end"] = img_cs[0, 0]
+                if len(listwk) == 0: continue
+                dfwk = pd.DataFrame(listwk, columns=["segmentation_color"])
+                dfwk["file_name"]     = files[i]
+                dfwk["category_name"] = dictwk["class"]
 
-                df = df.append(se, ignore_index=True)
-            if df.shape[0] > n_files: break
+                ## 背景色も判断するために画面の端もsampleする.
+                dfwk["segmentation_color_end"] = img_cs[0, 0]
+                list_df.append(dfwk.copy())
+
+            count_file += 1
+            if n_files is not None and count_file > n_files: break
             
         # 解析
+        df = pd.concat(list_df, ignore_index=True, sort=False, axis=0)
         for x in ["segmentation_color","segmentation_color_end"]: df[x] = df[x].astype(np.uint8)
+        self.df_ndds = df.copy()
         ## 色のパターン
-        dict_color = {x:None for x in np.unique(np.append(df["segmentation_color"].values, df["segmentation_color_end"].values))}
+        dict_color = {x:None for x in df["category_name"].unique()}
         ## 背景色
         se = df["segmentation_color_end"].value_counts().sort_values(ascending=False)
-        dict_color[se.index[0]] = "__bg"
+        dict_color["__bg"] = se.index[0]
         logger.info(f"back ground color: {se.index[0]}")
         ## object color
-        se = df.groupby("category_name")["segmentation_color"].value_counts()
-        se = se.sort_values(ascending=False)
-        for _index in se.index:
-            if dict_color[_index[1]] is None:
-                dict_color[_index[1]] = _index[0]
-                logger.info(f"{_index[0]} color: {_index[1]}")
-        ## 埋まらない色が一種類の場合
-        if (np.array(list(dict_color.values())) == None).sum() == 1:
-            ndf = df["category_name"].unique()
-            name  = ndf[~np.isin(ndf, list(dict_color.values()))][0]
-            for x in dict_color.keys():
-                if dict_color[x] is None: dict_color[x] = name
+        se = df.groupby("segmentation_color")["category_name"].value_counts()
+        se.name = "count"
+        dfwk = se.reset_index().copy().sort_values(["segmentation_color", "count"], ascending=False)
+        se = dfwk.groupby("segmentation_color").size().sort_values(ascending=True) # あるオブジェクトの周りにある色を集めて、category_nameの候補が少ない順にソートする
+        for seg_color in se.index:
+            dfwkwk = dfwk.loc[(dfwk["segmentation_color"] == seg_color), :]
+            for i_loc, cat_name in enumerate(dfwkwk["category_name"].values):
+                if dict_color.get(cat_name) is None:
+                    dict_color[cat_name] = seg_color
+                    logger.info(f'{cat_name} color: {seg_color} count:{dfwkwk["count"].iloc[i_loc]}')
+                    break
+        logger.info(f"\r\n{dict_color}")
         ## それでも埋まらない色がある場合はエラー
         if (np.array(list(dict_color.values())) == None).sum() > 0:
             raise Exception(f"We can't fill segmentation color.")
 
         # category 化
-        dict_color = {dict_color[x]:x for x in dict_color.keys()}
         if instance_merge is not None:
             for x in instance_merge.keys():
                 self.instances[x] = []
@@ -277,7 +297,7 @@ class Ndds2Coco:
         """
         logger.debug("START")
 
-        os.makedirs(correct_dirpath(dirpath), exist_ok=True)
+        makedirs(dirpath, exist_ok=True, remake=True)
         ndf = self.images["image_name"].unique()
         for x in ndf[ np.random.permutation(np.arange(ndf.shape[0]))[:n_images] ]:
             img = self.draw_infomation(x)
@@ -395,6 +415,7 @@ class CocoManager:
 
     def __init__(self):
         self.df_json   = pd.DataFrame()
+        self.json      = {} # 直近の１つを保存する
         self.coco_info = {}
 
 
@@ -427,12 +448,17 @@ class CocoManager:
             raise Exception(f"same file name: [{se[se.apply(lambda x: len(x) > 1)].index.values}]")
 
 
-    def re_index(self):
+    def re_index(self, check_file_exist_dir: str=None):
+        # ファイルが存在しなければcoco から外す
+        if check_file_exist_dir is not None:
+            filelist = [os.path.basename(x) for x in get_file_list(check_file_exist_dir)]
+            self.df_json = self.df_json[self.df_json["images_file_name"].isin(filelist)]
         # image id
         dictwk = {x:i  for i, x in enumerate(np.sort(self.df_json["images_coco_url"].unique()))}
         self.df_json["images_id"]            = self.df_json["images_coco_url"].map(dictwk)
         self.df_json["annotations_image_id"] = self.df_json["images_coco_url"].map(dictwk)
         # license id
+        self.df_json["licenses_name"] = self.df_json["licenses_name"].fillna("test license")
         dictwk = {x:i  for i, x in enumerate(np.sort(self.df_json["licenses_name"].unique()))}
         self.df_json["images_license"] = self.df_json["licenses_name"].map(dictwk)
         self.df_json["licenses_id"]    = self.df_json["licenses_name"].map(dictwk)
@@ -452,22 +478,26 @@ class CocoManager:
         json_coco = {}
         if   type(src) == str:  json_coco = json.load(open(src))
         elif type(src) == dict: json_coco = src
+        self.json = json_coco.copy()
+        if len(json_coco["licenses"]) == 0:
+            json_coco["licenses"] = [{'url': 'http://test', 'id': 0, 'name': 'test license'}]
         try:
             self.coco_info = json_coco["info"]
         except KeyError:
             print("'src' file or dictionary is not found 'info' key. so, skip this src.")
             return None
-        df = self.json_to_df(src)
+        df = self.json_to_df(json_coco)
         self.df_json = pd.concat([self.df_json, df], axis=0, ignore_index=True, sort=False)
         self.check_index()
         self.re_index()
     
 
-    def to_coco_format(self):
+    def to_coco_format(self, df_json: pd.DataFrame = None):
+        df_json = df_json.copy() if df_json is not None else self.df_json.copy()
         json_dict = {}
-        json_dict["info"]   = self.coco_info
+        json_dict["info"] = self.coco_info
         for _name in ["images", "annotations", "licenses", "categories"]:
-            df = self.df_json.loc[:, self.df_json.columns.str.contains("^"+_name+"_", regex=True)].copy()
+            df = df_json.loc[:, df_json.columns.str.contains("^"+_name+"_", regex=True)].copy()
             df.columns = df.columns.str[len(_name+"_"):]
             df = df.fillna("%%null%%")
             json_dict[_name] = df.groupby("id").first().reset_index().apply(lambda x: x.to_dict(), axis=1).to_list()
@@ -485,4 +515,122 @@ class CocoManager:
 
         with open(filename, "w") as f:
             f.write(self.to_coco_format())
+    
 
+    def draw_infomation(self, src, imgpath: str = None, is_show=True) -> np.ndarray:
+        # int の場合は その index の画像を見せる
+        if   type(src) == int:
+            df = self.df_json.iloc[src:src+1].copy() # df の状態で取得する
+        # string の場合はその画像に含まれる全てのinstanceの情報を表示する
+        elif type(src) == str:
+            df = self.df_json[self.df_json["images_file_name"] == src].copy()
+
+        # 画像の読み込み
+        url = df["images_coco_url"].iloc[0] if imgpath is None else correct_dirpath(imgpath) + df["images_file_name"].iloc[0]
+        img = cv2.imread(url)
+
+        for i in np.arange(df.shape[0]):
+            se = df.iloc[i]
+            # bounding box の描画
+            x,y,w,h = se["annotations_bbox"]
+            img = cv2.rectangle(img,(int(x),int(y)),(int(x+w),int(y+h)),(0,255,0),2)
+            # segmentation の描画
+            imgwk = np.zeros_like(img)
+            for seg in se["annotations_segmentation"]:
+                img   = cv2.polylines(img,[seg.reshape(-1,1,2)],True,(0,0,0))
+                imgwk = cv2.fillConvexPoly(imgwk, points=seg.reshape(-1, 2), color=(255,0,0))
+            img = cv2.addWeighted(img, 1, imgwk, 0.8, 0)
+
+        if is_show:
+            cv2.imshow("sample", img)
+            cv2.waitKey(0)
+
+        return img
+    
+
+    def output_draw_infomation(self, outdir: str, imgpath: str = None):
+        outdir = correct_dirpath(outdir)
+        makedirs(outdir, exist_ok=True, remake=True)
+        for x in self.df_json["images_file_name"].unique():
+            img = self.draw_infomation(x, imgpath=imgpath, is_show=False)
+            cv2.imwrite(outdir + x, img)
+
+
+    def crop_image_and_re_annotation(self, crop_by: dict, root_image: str, outfilename: str, outdir: str="./output_crop_images"):
+        """
+        crop_by で指定された方法で画像を切り抜いてre_annotationする
+        Params::
+            crop_by:
+                bounding box: {"bbox":["color_cone"]} のように指定
+        """
+        list_df_ret = []
+        for method in crop_by.keys():
+            df = self.df_json.copy()
+            if method == "bbox":
+                for ann in crop_by[method]:
+                    # annotation 単位でループする
+                    for imgid, (x,y,w,h,) in df[df["categories_name"] == ann][["images_id", "annotations_bbox"]].copy().values:
+                        # crop に使う category は除く. さらに同一のimgidで絞る
+                        df_ret = df[~(df["categories_name"] == ann) & (df["images_id"] == imgid)].copy()
+                        str_resize = "_".join([str(_y) for _y in [int(x), int(y), int(x+w), int(y+h)]])
+                        df_ret["__resize"] = str_resize # 最後に画像を切り抜くために箱を用意する
+                        bboxwk = [int(x), int(y), 0, 0]
+                        ## height, width
+                        df_ret["images_height"] = int(h)
+                        df_ret["images_width"]  = int(w)
+                        ## bbox の 修正
+                        df_ret["annotations_bbox"] = df_ret["annotations_bbox"].apply(lambda _x: [_y - bboxwk[_i] for _i, _y in enumerate(_x)])
+                        ndf = df_ret["annotations_bbox"].values # ndarray に渡して参照形式で修正する. ※汚いけど...
+                        for _i in np.arange(ndf.shape[0]):
+                            _listwk = ndf[_i]
+                            _listwk[0] = 0 if _listwk[0] < 0 else _listwk[0] # 0 以下は0に
+                            _listwk[1] = 0 if _listwk[1] < 0 else _listwk[1]
+                            _listwk[2] = int(w) - _listwk[0] if (_listwk[0] + _listwk[2]) > int(w) else _listwk[2] # 画面サイズ以上は画面サイズを上限に
+                            _listwk[3] = int(h) - _listwk[1] if (_listwk[1] + _listwk[3]) > int(h) else _listwk[3]
+                        ## segmentation の 修正
+                        ### segmentation : [[x1, y1, x2, y2, ...], [x1', y1', x2', y2', ...], ]
+                        df_ret["annotations_segmentation"] = df_ret["annotations_segmentation"].apply(lambda _x: [[_y - bboxwk[_i%2] for _i, _y in enumerate(_listwk)] for _listwk in _x])
+                        ndf = df_ret["annotations_segmentation"].values # ndarray に渡して参照形式で修正する. ※汚いけど...
+                        for _i in np.arange(ndf.shape[0]):
+                            _listwk = ndf[_i]
+                            for _j in np.arange(len(_listwk)):
+                                ### 偶数はx座標, 奇数はy座標
+                                if _j % 2 == 0:
+                                    _listwk[_j] = 0      if _listwk[_j] < 0      else _listwk[_j]
+                                    _listwk[_j] = int(w) if _listwk[_j] > int(w) else _listwk[_j]
+                                else:
+                                    _listwk[_j] = 0      if _listwk[_j] < 0      else _listwk[_j]
+                                    _listwk[_j] = int(h) if _listwk[_j] > int(h) else _listwk[_j]
+
+                        list_df_ret.append(df_ret.copy())
+        df_ret = pd.concat(list_df_ret, axis=0, ignore_index=True, sort=False)
+
+        # 画像を切り抜く. 新しい画像を作成し、名前を変える
+        root_image = correct_dirpath(root_image)
+        outdir     = correct_dirpath(outdir)
+        makedirs(outdir, exist_ok=True, remake=True)
+        for (imgname, str_resize,), dfwk in df_ret.groupby(["images_file_name", "__resize"]):
+            x1, y1, x2, y2 = [int(x) for x in str_resize.split("_")]
+            img = cv2.imread(root_image + imgname)
+            img = img[y1:y2, x1:x2, :]
+            filepath = outdir + imgname + "." + str_resize + ".png"
+            # 画像を保存する
+            cv2.imwrite(filepath, img)
+            # coco の 情報 を書き換える
+            df_ret.loc[dfwk.index, "images_file_name"] = os.path.basename(filepath)
+            df_ret.loc[dfwk.index, "images_coco_url" ] = filepath
+        df_ret["images_date_captured"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        df_ret = df_ret.drop(columns=["__resize"])
+
+        # 画面外にはみ出したannotationを修正する
+        ## 細かい修正は↑で行っているので、ここでは bbox = (0, y, 0, h) or (x, 0, w, 0) になっている行を省く
+        boolwk = np.array([False] * df_ret.shape[0])
+        boolwk = boolwk | (( df_ret["annotations_bbox"].map(lambda x: x[0]) == 0 ) & ( df_ret["annotations_bbox"].map(lambda x: x[2]) == 0 ))
+        boolwk = boolwk | (( df_ret["annotations_bbox"].map(lambda x: x[1]) == 0 ) & ( df_ret["annotations_bbox"].map(lambda x: x[3]) == 0 ))
+        df_ret = df_ret.loc[~boolwk, :] 
+
+        self.df_json = df_ret.copy()
+        self.re_index()
+
+        with open(outdir + outfilename, "w") as f:
+            f.write(self.to_coco_format())
