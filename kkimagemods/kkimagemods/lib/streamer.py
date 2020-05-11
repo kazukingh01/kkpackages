@@ -4,10 +4,8 @@ import os
 from typing import List, Tuple
 
 # logger の 定義
-import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - ' + \
-                                               '%(funcName)s - %(levelname)s : %(message)s')
-logger = logging.getLogger(__name__)
+from kkimagemods.util.logger import set_looger
+logger = set_looger(__name__)
 
 # 自作utilのimport
 from kkimagemods.util.common import check_type, correct_dirpath
@@ -93,7 +91,9 @@ class Streamer(BaseStreamer):
             if self.frame_cnt % step == 0:
                 if i > max_images:
                     raise Exception(f"max images: {max_images}.  save images is too much !!")
-                cv2.imwrite(outdir + name_base + "." + str(i).zfill(len(str(max_images))) + ".png", frame)
+                filename = outdir + name_base + "." + str(i).zfill(len(str(max_images))) + ".png"
+                logger.info(f"save image: {filename}")
+                cv2.imwrite(filename, frame)
                 i += 1
         self.close()
 

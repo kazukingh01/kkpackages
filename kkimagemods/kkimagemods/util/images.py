@@ -5,7 +5,36 @@ import glob
 from typing import List, Tuple
 
 # local lib
-from myimagemods.util.common import check_type, get_file_list, correct_dirpath, makedirs
+from kkimagemods.util.common import check_type, get_file_list, correct_dirpath, makedirs
+
+def drow_bboxes(img_org: np.ndarray, bboxes: List[List[float]], bbox_type="wh"):
+    """
+    bbox を加えて描画していく
+
+    Params
+    ----------------
+    img_org:
+        書き込む元の画像
+    bboxes:
+        [x, y, w, h] or [[x, y, w, h], [x, y, w, h], ...]
+    bbox_type: wh or xy
+    """
+    def __work(x1, y1, x2, y2, bbox_type: str):
+        if   bbox_type == "xy":
+            return (int(x1),int(y1),), (int(x2),int(y2),)
+        elif bbox_type == "wh":
+            return (int(x1),int(y1),), (int(x1+x2),int(y1+y2),)
+
+    img = img_org.copy()
+    if len(bboxes) == 4 and type(bboxes[0]) != list:
+        # bbox が１つの場合
+        img = cv2.rectangle(img, __work(*bboxes, bbox_type) ,(0,255,0),2)
+    else:
+        # bbox が複数の場合
+        for bbox in bboxes:
+            img = cv2.rectangle(img, *__work(*bbox, bbox_type) ,(0,255,0),2)
+    return img
+
 
 def add_image_in_region(binary: np.ndarray, addImage: np.ndarray, \
     x: int, y: int, width: int, height: int, extend_width: int=0) -> np.ndarray:

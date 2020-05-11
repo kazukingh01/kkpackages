@@ -12,7 +12,7 @@ import json, datetime, glob, os, shutil, sys
 from typing import List
 
 # my package
-from kkimagemods.util.common import correct_dirpath, check_type, makedirs
+from kkimagemods.util.common import correct_dirpath, check_type, makedirs, get_file_list
 from kkimagemods.util.logger import set_looger
 logger = set_looger(__name__)
 
@@ -415,6 +415,7 @@ class CocoManager:
 
     def __init__(self):
         self.df_json   = pd.DataFrame()
+        self.json      = {} # 直近の１つを保存する
         self.coco_info = {}
 
 
@@ -447,12 +448,17 @@ class CocoManager:
             raise Exception(f"same file name: [{se[se.apply(lambda x: len(x) > 1)].index.values}]")
 
 
-    def re_index(self):
+    def re_index(self, check_file_exist_dir: str=None):
+        # ファイルが存在しなければcoco から外す
+        if check_file_exist_dir is not None:
+            filelist = [os.path.basename(x) for x in get_file_list(check_file_exist_dir)]
+            self.df_json = self.df_json[self.df_json["images_file_name"].isin(filelist)]
         # image id
         dictwk = {x:i  for i, x in enumerate(np.sort(self.df_json["images_coco_url"].unique()))}
         self.df_json["images_id"]            = self.df_json["images_coco_url"].map(dictwk)
         self.df_json["annotations_image_id"] = self.df_json["images_coco_url"].map(dictwk)
         # license id
+        self.df_json["licenses_name"] = self.df_json["licenses_name"].fillna("test license")
         dictwk = {x:i  for i, x in enumerate(np.sort(self.df_json["licenses_name"].unique()))}
         self.df_json["images_license"] = self.df_json["licenses_name"].map(dictwk)
         self.df_json["licenses_id"]    = self.df_json["licenses_name"].map(dictwk)
@@ -472,22 +478,26 @@ class CocoManager:
         json_coco = {}
         if   type(src) == str:  json_coco = json.load(open(src))
         elif type(src) == dict: json_coco = src
+        self.json = json_coco.copy()
+        if len(json_coco["licenses"]) == 0:
+            json_coco["licenses"] = [{'url': 'http://test', 'id': 0, 'name': 'test license'}]
         try:
             self.coco_info = json_coco["info"]
         except KeyError:
             print("'src' file or dictionary is not found 'info' key. so, skip this src.")
             return None
-        df = self.json_to_df(src)
+        df = self.json_to_df(json_coco)
         self.df_json = pd.concat([self.df_json, df], axis=0, ignore_index=True, sort=False)
         self.check_index()
         self.re_index()
     
 
-    def to_coco_format(self):
+    def to_coco_format(self, df_json: pd.DataFrame = None):
+        df_json = df_json.copy() if df_json is not None else self.df_json.copy()
         json_dict = {}
-        json_dict["info"]   = self.coco_info
+        json_dict["info"] = self.coco_info
         for _name in ["images", "annotations", "licenses", "categories"]:
-            df = self.df_json.loc[:, self.df_json.columns.str.contains("^"+_name+"_", regex=True)].copy()
+            df = df_json.loc[:, df_json.columns.str.contains("^"+_name+"_", regex=True)].copy()
             df.columns = df.columns.str[len(_name+"_"):]
             df = df.fillna("%%null%%")
             json_dict[_name] = df.groupby("id").first().reset_index().apply(lambda x: x.to_dict(), axis=1).to_list()
@@ -505,4 +515,122 @@ class CocoManager:
 
         with open(filename, "w") as f:
             f.write(self.to_coco_format())
+    
 
+    def draw_infomation(self, src, imgpath: str = None, is_show=True) -> np.ndarray:
+        # int の場合は その index の画像を見せる
+        if   type(src) == int:
+            df = self.df_json.iloc[src:src+1].copy() # df の状態で取得する
+        # string の場合はその画像に含まれる全てのinstanceの情報を表示する
+        elif type(src) == str:
+            df = self.df_json[self.df_json["images_file_name"] == src].copy()
+
+        # 画像の読み込み
+        url = df["images_coco_url"].iloc[0] if imgpath is None else correct_dirpath(imgpath) + df["images_file_name"].iloc[0]
+        img = cv2.imread(url)
+
+        for i in np.arange(df.shape[0]):
+            se = df.iloc[i]
+            # bounding box の描画
+            x,y,w,h = se["annotations_bbox"]
+            img = cv2.rectangle(img,(int(x),int(y)),(int(x+w),int(y+h)),(0,255,0),2)
+            # segmentation の描画
+            imgwk = np.zeros_like(img)
+            for seg in se["annotations_segmentation"]:
+                img   = cv2.polylines(img,[seg.reshape(-1,1,2)],True,(0,0,0))
+                imgwk = cv2.fillConvexPoly(imgwk, points=seg.reshape(-1, 2), color=(255,0,0))
+            img = cv2.addWeighted(img, 1, imgwk, 0.8, 0)
+
+        if is_show:
+            cv2.imshow("sample", img)
+            cv2.waitKey(0)
+
+        return img
+    
+
+    def output_draw_infomation(self, outdir: str, imgpath: str = None):
+        outdir = correct_dirpath(outdir)
+        makedirs(outdir, exist_ok=True, remake=True)
+        for x in self.df_json["images_file_name"].unique():
+            img = self.draw_infomation(x, imgpath=imgpath, is_show=False)
+            cv2.imwrite(outdir + x, img)
+
+
+    def crop_image_and_re_annotation(self, crop_by: dict, root_image: str, outfilename: str, outdir: str="./output_crop_images"):
+        """
+        crop_by で指定された方法で画像を切り抜いてre_annotationする
+        Params::
+            crop_by:
+                bounding box: {"bbox":["color_cone"]} のように指定
+        """
+        list_df_ret = []
+        for method in crop_by.keys():
+            df = self.df_json.copy()
+            if method == "bbox":
+                for ann in crop_by[method]:
+                    # annotation 単位でループする
+                    for imgid, (x,y,w,h,) in df[df["categories_name"] == ann][["images_id", "annotations_bbox"]].copy().values:
+                        # crop に使う category は除く. さらに同一のimgidで絞る
+                        df_ret = df[~(df["categories_name"] == ann) & (df["images_id"] == imgid)].copy()
+                        str_resize = "_".join([str(_y) for _y in [int(x), int(y), int(x+w), int(y+h)]])
+                        df_ret["__resize"] = str_resize # 最後に画像を切り抜くために箱を用意する
+                        bboxwk = [int(x), int(y), 0, 0]
+                        ## height, width
+                        df_ret["images_height"] = int(h)
+                        df_ret["images_width"]  = int(w)
+                        ## bbox の 修正
+                        df_ret["annotations_bbox"] = df_ret["annotations_bbox"].apply(lambda _x: [_y - bboxwk[_i] for _i, _y in enumerate(_x)])
+                        ndf = df_ret["annotations_bbox"].values # ndarray に渡して参照形式で修正する. ※汚いけど...
+                        for _i in np.arange(ndf.shape[0]):
+                            _listwk = ndf[_i]
+                            _listwk[0] = 0 if _listwk[0] < 0 else _listwk[0] # 0 以下は0に
+                            _listwk[1] = 0 if _listwk[1] < 0 else _listwk[1]
+                            _listwk[2] = int(w) - _listwk[0] if (_listwk[0] + _listwk[2]) > int(w) else _listwk[2] # 画面サイズ以上は画面サイズを上限に
+                            _listwk[3] = int(h) - _listwk[1] if (_listwk[1] + _listwk[3]) > int(h) else _listwk[3]
+                        ## segmentation の 修正
+                        ### segmentation : [[x1, y1, x2, y2, ...], [x1', y1', x2', y2', ...], ]
+                        df_ret["annotations_segmentation"] = df_ret["annotations_segmentation"].apply(lambda _x: [[_y - bboxwk[_i%2] for _i, _y in enumerate(_listwk)] for _listwk in _x])
+                        ndf = df_ret["annotations_segmentation"].values # ndarray に渡して参照形式で修正する. ※汚いけど...
+                        for _i in np.arange(ndf.shape[0]):
+                            _listwk = ndf[_i]
+                            for _j in np.arange(len(_listwk)):
+                                ### 偶数はx座標, 奇数はy座標
+                                if _j % 2 == 0:
+                                    _listwk[_j] = 0      if _listwk[_j] < 0      else _listwk[_j]
+                                    _listwk[_j] = int(w) if _listwk[_j] > int(w) else _listwk[_j]
+                                else:
+                                    _listwk[_j] = 0      if _listwk[_j] < 0      else _listwk[_j]
+                                    _listwk[_j] = int(h) if _listwk[_j] > int(h) else _listwk[_j]
+
+                        list_df_ret.append(df_ret.copy())
+        df_ret = pd.concat(list_df_ret, axis=0, ignore_index=True, sort=False)
+
+        # 画像を切り抜く. 新しい画像を作成し、名前を変える
+        root_image = correct_dirpath(root_image)
+        outdir     = correct_dirpath(outdir)
+        makedirs(outdir, exist_ok=True, remake=True)
+        for (imgname, str_resize,), dfwk in df_ret.groupby(["images_file_name", "__resize"]):
+            x1, y1, x2, y2 = [int(x) for x in str_resize.split("_")]
+            img = cv2.imread(root_image + imgname)
+            img = img[y1:y2, x1:x2, :]
+            filepath = outdir + imgname + "." + str_resize + ".png"
+            # 画像を保存する
+            cv2.imwrite(filepath, img)
+            # coco の 情報 を書き換える
+            df_ret.loc[dfwk.index, "images_file_name"] = os.path.basename(filepath)
+            df_ret.loc[dfwk.index, "images_coco_url" ] = filepath
+        df_ret["images_date_captured"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        df_ret = df_ret.drop(columns=["__resize"])
+
+        # 画面外にはみ出したannotationを修正する
+        ## 細かい修正は↑で行っているので、ここでは bbox = (0, y, 0, h) or (x, 0, w, 0) になっている行を省く
+        boolwk = np.array([False] * df_ret.shape[0])
+        boolwk = boolwk | (( df_ret["annotations_bbox"].map(lambda x: x[0]) == 0 ) & ( df_ret["annotations_bbox"].map(lambda x: x[2]) == 0 ))
+        boolwk = boolwk | (( df_ret["annotations_bbox"].map(lambda x: x[1]) == 0 ) & ( df_ret["annotations_bbox"].map(lambda x: x[3]) == 0 ))
+        df_ret = df_ret.loc[~boolwk, :] 
+
+        self.df_json = df_ret.copy()
+        self.re_index()
+
+        with open(outdir + outfilename, "w") as f:
+            f.write(self.to_coco_format())
