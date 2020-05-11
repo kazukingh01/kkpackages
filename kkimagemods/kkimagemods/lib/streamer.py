@@ -4,8 +4,8 @@ import os
 from typing import List, Tuple
 
 # logger の 定義
-from kkimagemods.util.logger import set_looger
-logger = set_looger(__name__)
+from kkimagemods.util.logger import set_logger
+logger = set_logger(__name__)
 
 # 自作utilのimport
 from kkimagemods.util.common import check_type, correct_dirpath

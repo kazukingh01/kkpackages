@@ -13,8 +13,8 @@ from typing import List
 
 # my package
 from kkimagemods.util.common import correct_dirpath, check_type, makedirs, get_file_list
-from kkimagemods.util.logger import set_looger
-logger = set_looger(__name__)
+from kkimagemods.util.logger import set_logger
+logger = set_logger(__name__)
 
 def coco_info(
         description: str = "my coco dataset.",
