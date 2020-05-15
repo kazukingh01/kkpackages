@@ -22,15 +22,14 @@ from kkimagemods.util.images import drow_bboxes
 
 class MyDet2(DefaultTrainer):
     def __init__(
-            self, 
+            self,
             # coco dataset
             train_dataset_name: str=None, test_dataset_name: str=None, coco_json_path: str=None, image_root: str=None,
             # train params
-            cfg=None, mapper=None, model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", max_iter: int=100, 
-            # test params
-            weight_path: str=None,
+            cfg=None, mapper=None, max_iter: int=100, is_train: bool=True,
             # train and test params
-            threshold: float=0.2, outdir: str="./output"
+            model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", weight_path: str=None, 
+            n_classes: int=1, input_size: tuple=(800, 1333), threshold: float=0.2, outdir: str="./output"
         ):
         # coco dataset
         self.train_dataset_name = train_dataset_name
@@ -39,11 +38,11 @@ class MyDet2(DefaultTrainer):
         self.image_root         = image_root
         self.mapper             = mapper
 
-        if weight_path is None:
+        if is_train:
             # train setting
             ## Coco dataset setting
             self.__register_coco_instances()
-            self.cfg = cfg if cfg is not None else self.set_config(model_zoo_path, train_dataset_name, test_dataset_name=test_dataset_name, threshold=threshold, max_iter=max_iter, outdir=outdir)
+            self.cfg = cfg if cfg is not None else self.set_config(model_zoo_path, train_dataset_name, weight_path=weight_path, test_dataset_name=test_dataset_name, threshold=threshold, max_iter=max_iter, n_classes=n_classes, input_size=input_size, outdir=outdir)
             os.makedirs(self.cfg.OUTPUT_DIR, exist_ok=True) # この宣言は先にする
             super().__init__(self.cfg)
             self.__set_dataloader()
@@ -51,7 +50,7 @@ class MyDet2(DefaultTrainer):
             self.resume_or_load(resume=False) # Falseだとload the model specified by the config (skip all checkpointables).
         else:
             # test setting
-            self.cfg = cfg if cfg is not None else self.set_config_basic(model_zoo_path, outdir=outdir)
+            self.cfg = cfg if cfg is not None else self.set_config_basic(model_zoo_path, n_classes, input_size, outdir=outdir)
             self.cfg.DATASETS.TEST = (test_dataset_name, )
             self.set_predictor(weight_path, threshold=threshold)
 
@@ -68,29 +67,36 @@ class MyDet2(DefaultTrainer):
 
 
     @classmethod
-    def set_config_basic(cls, model_zoo_path, outdir: str="./output"):
+    def set_config_basic(cls, model_zoo_path, n_classes, input_size: tuple, outdir: str="./output"):
+        """
+        see https://detectron2.readthedocs.io/modules/config.html#detectron2.config.CfgNode
+        """
         ## predict するのに最低限これだけの記述が必要
         cfg = get_cfg()
         cfg.merge_from_file(model_zoo.get_config_file(model_zoo_path))
-        cfg.MODEL.ROI_HEADS.NUM_CLASSES = 100 # テスト時はなんか指定しないと動かなかった？
+        cfg.MODEL.ROI_HEADS.NUM_CLASSES = n_classes # テスト時はなんか指定しないと動かなかった？
         cfg.OUTPUT_DIR = outdir
+        cfg.INPUT.MIN_SIZE_TEST = input_size[0]
+        cfg.INPUT.MAX_SIZE_TEST = input_size[1]
         return cfg
 
 
     @classmethod
-    def set_config(cls, model_zoo_path, train_dataset_name, test_dataset_name=None, threshold: float=0.2, max_iter: int=100, outdir: str="./output"):
+    def set_config(cls, model_zoo_path: str, train_dataset_name: str, weight_path: str=None, test_dataset_name: str=None, threshold: float=0.2, max_iter: int=100, n_classes: int=1, input_size: tuple=(800,1333,), outdir: str="./output"):
         if model_zoo_path is None or train_dataset_name is None: raise Exception("train_dataset_name is needed !!")
-        cfg = cls.set_config_basic(model_zoo_path, outdir=outdir)
+        cfg = cls.set_config_basic(model_zoo_path, n_classes, input_size, outdir=outdir)
         #cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
         #cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_X_101_32x8d_FPN_3x.yaml"))
         cfg.DATASETS.TRAIN = (train_dataset_name, ) # DatasetCatalog, MetadataCatalog の中で自分でsetした"my_dataset_train"を指定
         cfg.DATASETS.TEST  = ((test_dataset_name if test_dataset_name is not None else train_dataset_name),)
-        cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(model_zoo_path)  # Let training initialize from model zoo
-        #cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")  # Let training initialize from model zoo
+        cfg.MODEL.WEIGHTS = (model_zoo.get_checkpoint_url(model_zoo_path)) if weight_path is None else weight_path
+        #cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")  #  Let training initialize from model zoo
         #cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_X_101_32x8d_FPN_3x.yaml")  # Let training initialize from model zoo
         cfg.SOLVER.BASE_LR = 0.001 # pick a good LR
-        cfg.DATALOADER.NUM_WORKERS = 2
-        cfg.SOLVER.IMS_PER_BATCH   = 2
+        cfg.INPUT.MIN_SIZE_TRAIN = input_size[0]
+        cfg.INPUT.MAX_SIZE_TRAIN = input_size[1]
+        cfg.DATALOADER.NUM_WORKERS = 1
+        cfg.SOLVER.IMS_PER_BATCH   = 1
         cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128 # faster, and good enough for this toy dataset (default: 512)
         cfg.SOLVER.MAX_ITER = max_iter    # 300 iterations seems good enough for this toy dataset; you may need to train longer for a practical dataset
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = threshold   # set the testing threshold for this model

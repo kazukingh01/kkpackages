@@ -51,6 +51,8 @@ class Ndds2Coco:
         self.df_ndds = pd.DataFrame()
         self.instances = {}
         self.ignore_jsons = ["_camera_settings.json", "_object_settings.json"]
+        self.convert_mode = None
+        self.instance_merge = None
         logger.debug("Set instance: Ndds2Coco.")
     
 
@@ -68,11 +70,21 @@ class Ndds2Coco:
 
         logger.debug("END")
         return json_files
+    
+
+    @classmethod
+    def ndds_instanceid_to_color(cls, instance_id: int):
+        RGBint = instance_id
+        pixel_b =  RGBint & 255
+        pixel_g = (RGBint >> 8) & 255
+        pixel_r =   (RGBint >> 16) & 255
+        return (pixel_b,pixel_g,pixel_r,)
 
 
     def set_base_parameter(
         self, dirpath: str, n_files: int = 100, instance_merge: dict = None, 
         visibility_threshold = 0.2, extra_pixel_x: int = 0, extra_pixel_y: int = 0, 
+        convert_mode: str = "is"
     ):
         """
         ## Precondition ###########################
@@ -101,101 +113,144 @@ class Ndds2Coco:
                     )
         """
         logger.debug("START")
+        self.convert_mode   = convert_mode
+        self.instance_merge = instance_merge
+        if self.convert_mode == "cs":
+            df = pd.DataFrame()
 
-        df = pd.DataFrame()
+            # json files
+            files = self.__get_json_files(dirpath)
+            count_file = 0
+            list_df = []
+            for i in np.random.permutation(np.arange(len(files))):
+                # json file read
+                fjson = json.load(open(files[i]))
+                logger.info(f"open file: {files[i]}")
 
-        # json files
-        files = self.__get_json_files(dirpath)
-        count_file = 0
-        list_df = []
-        for i in np.random.permutation(np.arange(len(files))):
-            # json file read
-            fjson = json.load(open(files[i]))
-            logger.info(f"open file: {files[i]}")
+                # image file read
+                img = cv2.cvtColor(cv2.imread(files[i].replace(".json", ".cs.png")), cv2.COLOR_BGR2GRAY)
 
-            # image file read
-            img_cs = cv2.cvtColor(cv2.imread(files[i].replace(".json", ".cs.png")), cv2.COLOR_BGR2GRAY)
+                # json file reading
+                for dictwk in fjson["objects"]:
+                    if dictwk["visibility"] < visibility_threshold: continue
+                    x = dictwk["projected_cuboid_centroid"][0]
+                    y = dictwk["projected_cuboid_centroid"][1]
+                    logger.debug(f'fname: {os.path.basename(files[i])}, class: {dictwk["class"]}, visibility: {dictwk["visibility"]}, center: {(int(y), int(x), )}')
+                    listwk = None
+                    x1, x2  = (int(x) + -1 * extra_pixel_x), (int(x) + extra_pixel_x+1)
+                    y1, y2  = (int(y) + -1 * extra_pixel_y), (int(y) + extra_pixel_y+1)
+                    x1 = x1 if x1 >= 0 else 0
+                    y1 = y1 if y1 >= 0 else 0
+                    x2 = x2 if x2 <= img.shape[1] else img.shape[1]
+                    y2 = y2 if y2 <= img.shape[0] else img.shape[0]
+                    try:
+                        listwk = img[y1:y2, x1:x2].reshape(-1).tolist()
+                    except IndexError:
+                        ## objectの中心が画面の外にはみ出してindex error になる場合があるのでその場合は省く
+                        logger.warning("search range is out of images.")
+                        continue
+                    if len(listwk) == 0: continue
+                    dfwk = pd.DataFrame(listwk, columns=["segmentation_color"])
+                    dfwk["file_name"]     = files[i]
+                    dfwk["category_name"] = dictwk["class"]
 
-            # json file reading
-            for dictwk in fjson["objects"]:
-                if dictwk["visibility"] < visibility_threshold: continue
-                x = dictwk["projected_cuboid_centroid"][0]
-                y = dictwk["projected_cuboid_centroid"][1]
-                logger.debug(f'fname: {os.path.basename(files[i])}, class: {dictwk["class"]}, visibility: {dictwk["visibility"]}, center: {(int(y), int(x), )}')
-                listwk = None
-                x1, x2  = (int(x) + -1 * extra_pixel_x), (int(x) + extra_pixel_x+1)
-                y1, y2  = (int(y) + -1 * extra_pixel_y), (int(y) + extra_pixel_y+1)
-                x1 = x1 if x1 >= 0 else 0
-                y1 = y1 if y1 >= 0 else 0
-                x2 = x2 if x2 <= img_cs.shape[1] else img_cs.shape[1]
-                y2 = y2 if y2 <= img_cs.shape[0] else img_cs.shape[0]
-                try:
-                    listwk = img_cs[y1:y2, x1:x2].reshape(-1).tolist()
-                except IndexError:
-                    ## objectの中心が画面の外にはみ出してindex error になる場合があるのでその場合は省く
-                    logger.warning("search range is out of images.")
-                    continue
-                if len(listwk) == 0: continue
-                dfwk = pd.DataFrame(listwk, columns=["segmentation_color"])
-                dfwk["file_name"]     = files[i]
-                dfwk["category_name"] = dictwk["class"]
+                    ## 背景色も判断するために画面の端もsampleする.
+                    for _i in range(1,5):
+                        dfwk["segmentation_color_end"+str(_i)] = img[0 if _i//2==0 else -1, 0 if _i%2==0 else -1]
+                    list_df.append(dfwk.copy())
 
-                ## 背景色も判断するために画面の端もsampleする.
-                dfwk["segmentation_color_end"] = img_cs[0, 0]
-                list_df.append(dfwk.copy())
+                count_file += 1
+                if n_files is not None and count_file > n_files: break
+                
+            # 解析
+            df = pd.concat(list_df, ignore_index=True, sort=False, axis=0)
+            for x in ["segmentation_color"]+["segmentation_color_end"+str(_i) for _i in range(1,5)]: df[x] = df[x].astype(np.uint8)
+            self.df_ndds = df.copy()
+            ## 色のパターン
+            dict_color = {x:None for x in df["category_name"].unique()}
+            ## 背景色
+            se = pd.concat([df["segmentation_color_end"+str(_i)] for _i in range(1,5)], ignore_index=True, sort=False, axis=0)
+            se = se.value_counts().sort_values(ascending=False)
+            dict_color["__bg"] = se.index[0]
+            logger.info(f"back ground color: {se.index[0]}")
+            ## object color
+            se = df.groupby("segmentation_color")["category_name"].value_counts()
+            se.name = "count"
+            dfwk = se.reset_index().copy().sort_values(["segmentation_color", "count"], ascending=False)
+            se = dfwk.groupby("segmentation_color").size().sort_values(ascending=True) # あるオブジェクトの周りにある色を集めて、category_nameの候補が少ない順にソートする
+            for seg_color in se.index:
+                dfwkwk = dfwk.loc[(dfwk["segmentation_color"] == seg_color), :]
+                for i_loc, cat_name in enumerate(dfwkwk["category_name"].values):
+                    if dict_color.get(cat_name) is None:
+                        dict_color[cat_name] = seg_color
+                        logger.info(f'{cat_name} color: {seg_color} count:{dfwkwk["count"].iloc[i_loc]}')
+                        break
+            logger.info(f"\r\n{dict_color}")
+            ## それでも埋まらない色がある場合はエラー
+            if (np.array(list(dict_color.values())) == None).sum() > 0:
+                raise Exception(f"We can't fill segmentation color.")
 
-            count_file += 1
-            if n_files is not None and count_file > n_files: break
-            
-        # 解析
-        df = pd.concat(list_df, ignore_index=True, sort=False, axis=0)
-        for x in ["segmentation_color","segmentation_color_end"]: df[x] = df[x].astype(np.uint8)
-        self.df_ndds = df.copy()
-        ## 色のパターン
-        dict_color = {x:None for x in df["category_name"].unique()}
-        ## 背景色
-        se = df["segmentation_color_end"].value_counts().sort_values(ascending=False)
-        dict_color["__bg"] = se.index[0]
-        logger.info(f"back ground color: {se.index[0]}")
-        ## object color
-        se = df.groupby("segmentation_color")["category_name"].value_counts()
-        se.name = "count"
-        dfwk = se.reset_index().copy().sort_values(["segmentation_color", "count"], ascending=False)
-        se = dfwk.groupby("segmentation_color").size().sort_values(ascending=True) # あるオブジェクトの周りにある色を集めて、category_nameの候補が少ない順にソートする
-        for seg_color in se.index:
-            dfwkwk = dfwk.loc[(dfwk["segmentation_color"] == seg_color), :]
-            for i_loc, cat_name in enumerate(dfwkwk["category_name"].values):
-                if dict_color.get(cat_name) is None:
-                    dict_color[cat_name] = seg_color
-                    logger.info(f'{cat_name} color: {seg_color} count:{dfwkwk["count"].iloc[i_loc]}')
-                    break
-        logger.info(f"\r\n{dict_color}")
-        ## それでも埋まらない色がある場合はエラー
-        if (np.array(list(dict_color.values())) == None).sum() > 0:
-            raise Exception(f"We can't fill segmentation color.")
-
-        # category 化
-        if instance_merge is not None:
-            for x in instance_merge.keys():
-                self.instances[x] = []
-                for y in instance_merge[x]:
-                    self.instances[x].append(dict_color[y])
+            # category 化
+            if instance_merge is not None:
+                for x in instance_merge.keys():
+                    self.instances[x] = []
+                    for y in instance_merge[x]:
+                        self.instances[x].append(dict_color[y])
+            else:
+                self.instances = {x: [dict_color[x]] for x in dict_color}
+        
+        elif self.convert_mode == "is":
+            self.read_object_setting(correct_dirpath(dirpath) + "_object_settings.json")
+        
         else:
-            self.instances = {x: [dict_color[x]] for x in dict_color}
+            logger.raise_error(f"mode: {mode} is not expected mode.")
 
         logger.debug("END")
 
 
-    def __read_ndds_output(self, json_file_path: str):
+    def read_object_setting(self, json_file_path: str):
+        """
+        create dictionary {class_name: instance_color}
+        """
         logger.debug("START")
+        fjson = json.load(open(json_file_path))
+        # まず単純にclassと色のdictionaryを作成する
+        instances_org = {}
+        for dictwk in fjson["exported_objects"]:
+            instances_org[dictwk["class"]] = self.ndds_instanceid_to_color(dictwk["segmentation_instance_id"])
+        self.instances = {}
+        if self.instance_merge is not None:
+            for x in self.instance_merge.keys():
+                self.instances[x] = []
+                for y in self.instance_merge[x]: # ここはlist
+                    self.instances[x].append(instances_org[y])
+        else:
+            self.instances = {x:[instances_org[x]] for x in instances_org.keys()}
+        logger.debug("END")
+
+
+    def __read_ndds_output(self, json_file_path: str, visibility_threshold: float=0.1):
+        logger.debug("START")
+
+        #  json load
+        fjson = json.load(open(json_file_path))
 
         # image file
         image_path = json_file_path.replace(".json", ".png")
         image_name = json_file_path[json_file_path.rfind("/")+1:].replace(".json", ".png")
 
-        img_cs = cv2.cvtColor(cv2.imread(json_file_path.replace(".json", ".cs.png")), cv2.COLOR_BGR2GRAY)
-        height = img_cs.shape[0]
-        width  = img_cs.shape[1]
+        # mode によって読み込む画像を変更する
+        img = None
+        if   self.convert_mode == "cs":
+            img = cv2.cvtColor(cv2.imread(json_file_path.replace(".json", ".cs.png")), cv2.COLOR_BGR2GRAY)
+        elif self.convert_mode == "is":
+            img = cv2.imread(json_file_path.replace(".json", ".is.png"))
+            if tuple(np.unique(img)) == tuple(np.array([0], dtype=np.uint8)):
+                ## is の判断の場合、画像が壊れている場合がある。壊れている画像はオール0の値の画像である
+                logger.warning(f"is.png is broken. ignore image: {image_path}")
+                return None
+        height = img.shape[0]
+        width  = img.shape[1]
 
         for name in self.instances.keys():
             # objects
@@ -206,8 +261,28 @@ class Ndds2Coco:
             se["width"]      = width
             se["category_name"] = name
 
+            # visivility threshold
+            thre = 0.
+            if self.instance_merge is not None:
+                listwk = self.instance_merge[name]
+                for dictwk in fjson["objects"]:
+                    if dictwk["class"] in listwk: thre += dictwk["visibility"]
+                thre = thre / len(listwk) # 複数のobject で1 classを表現している場合は、平均を取る
+            else:
+                for dictwk in fjson["object"]:
+                    if dictwk["class"] == name:
+                        thre = dictwk["visibility"]
+                        break
+            if thre < visibility_threshold: continue
+
             ## instance の処理
-            ndf = np.isin(img_cs, self.instances[name]).astype(np.uint8)
+            if   self.convert_mode == "cs":
+                ndf = np.isin(img, self.instances[name]).astype(np.uint8)
+            elif self.convert_mode == "is":
+                ndf = np.zeros_like(img[:, :, 0]).astype(np.int32)
+                for ndfwk in self.instances[name]:
+                    ndf = ndf + cv2.inRange(img, ndfwk, ndfwk)
+                ndf = ndf.astype(np.uint8)
             ## 何も画像がない場合
             if np.sum(ndf) == 0: continue
             ## bounding box (自作) の処理
@@ -295,7 +370,7 @@ class Ndds2Coco:
             >>> ndds_to_coco.read_ndds_output_all("~/my_ndds_output_path")
             >>> ndds_to_coco.sample_ouptut(n_images: int = 100, dirpath = "./sample_ouptut")
         """
-        logger.debug("START")
+        logger.info("START")
 
         makedirs(dirpath, exist_ok=True, remake=True)
         ndf = self.images["image_name"].unique()
@@ -303,7 +378,7 @@ class Ndds2Coco:
             img = self.draw_infomation(x)
             cv2.imwrite(dirpath + "/" + x, img)
 
-        logger.debug("END")
+        logger.info("END")
 
 
     def to_coco_format(self, category_merge: dict) -> str:
@@ -536,7 +611,8 @@ class CocoManager:
             img = cv2.rectangle(img,(int(x),int(y)),(int(x+w),int(y+h)),(0,255,0),2)
             # segmentation の描画
             imgwk = np.zeros_like(img)
-            for seg in se["annotations_segmentation"]:
+            for listwk in se["annotations_segmentation"]:
+                seg = np.array(listwk)
                 img   = cv2.polylines(img,[seg.reshape(-1,1,2)],True,(0,0,0))
                 imgwk = cv2.fillConvexPoly(imgwk, points=seg.reshape(-1, 2), color=(255,0,0))
             img = cv2.addWeighted(img, 1, imgwk, 0.8, 0)
@@ -563,6 +639,7 @@ class CocoManager:
             crop_by:
                 bounding box: {"bbox":["color_cone"]} のように指定
         """
+        logger.info("START")
         list_df_ret = []
         for method in crop_by.keys():
             df = self.df_json.copy()
@@ -570,6 +647,7 @@ class CocoManager:
                 for ann in crop_by[method]:
                     # annotation 単位でループする
                     for imgid, (x,y,w,h,) in df[df["categories_name"] == ann][["images_id", "annotations_bbox"]].copy().values:
+                        logger.info(f"image id: {imgid}")
                         # crop に使う category は除く. さらに同一のimgidで絞る
                         df_ret = df[~(df["categories_name"] == ann) & (df["images_id"] == imgid)].copy()
                         str_resize = "_".join([str(_y) for _y in [int(x), int(y), int(x+w), int(y+h)]])
@@ -592,15 +670,16 @@ class CocoManager:
                         df_ret["annotations_segmentation"] = df_ret["annotations_segmentation"].apply(lambda _x: [[_y - bboxwk[_i%2] for _i, _y in enumerate(_listwk)] for _listwk in _x])
                         ndf = df_ret["annotations_segmentation"].values # ndarray に渡して参照形式で修正する. ※汚いけど...
                         for _i in np.arange(ndf.shape[0]):
-                            _listwk = ndf[_i]
-                            for _j in np.arange(len(_listwk)):
-                                ### 偶数はx座標, 奇数はy座標
-                                if _j % 2 == 0:
-                                    _listwk[_j] = 0      if _listwk[_j] < 0      else _listwk[_j]
-                                    _listwk[_j] = int(w) if _listwk[_j] > int(w) else _listwk[_j]
-                                else:
-                                    _listwk[_j] = 0      if _listwk[_j] < 0      else _listwk[_j]
-                                    _listwk[_j] = int(h) if _listwk[_j] > int(h) else _listwk[_j]
+                            _list = ndf[_i] # ここでlistのlist[[854, 121, 855, 120, 856, 120, 857, 120, ...], [...]]
+                            for _listwk in _list:
+                                for _j in np.arange(len(_listwk)):
+                                    ### 偶数はx座標, 奇数はy座標
+                                    if _j % 2 == 0:
+                                        _listwk[_j] = 0      if _listwk[_j] < 0      else _listwk[_j]
+                                        _listwk[_j] = int(w) if _listwk[_j] > int(w) else _listwk[_j]
+                                    else:
+                                        _listwk[_j] = 0      if _listwk[_j] < 0      else _listwk[_j]
+                                        _listwk[_j] = int(h) if _listwk[_j] > int(h) else _listwk[_j]
 
                         list_df_ret.append(df_ret.copy())
         df_ret = pd.concat(list_df_ret, axis=0, ignore_index=True, sort=False)
@@ -610,6 +689,7 @@ class CocoManager:
         outdir     = correct_dirpath(outdir)
         makedirs(outdir, exist_ok=True, remake=True)
         for (imgname, str_resize,), dfwk in df_ret.groupby(["images_file_name", "__resize"]):
+            logger.info(f"resize image name: {imgname}")
             x1, y1, x2, y2 = [int(x) for x in str_resize.split("_")]
             img = cv2.imread(root_image + imgname)
             img = img[y1:y2, x1:x2, :]
@@ -634,3 +714,5 @@ class CocoManager:
 
         with open(outdir + outfilename, "w") as f:
             f.write(self.to_coco_format())
+        
+        logger.info("END")
