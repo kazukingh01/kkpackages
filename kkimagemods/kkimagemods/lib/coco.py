@@ -352,7 +352,7 @@ class Ndds2Coco:
         return img
     
 
-    def sample_ouptut(self, n_images: int = 100, dirpath = "./sample_ouptut"):
+    def sample_ouptut(self, n_images: int = 100, dirpath = "./sample_ouptut", exist_ok: bool=False, remake: bool=False):
         """
         Output images converted to Coco format. 
 
@@ -372,7 +372,7 @@ class Ndds2Coco:
         """
         logger.info("START")
 
-        makedirs(dirpath, exist_ok=True, remake=True)
+        makedirs(dirpath, exist_ok=exist_ok, remake=remake)
         ndf = self.images["image_name"].unique()
         for x in ndf[ np.random.permutation(np.arange(ndf.shape[0]))[:n_images] ]:
             img = self.draw_infomation(x)
