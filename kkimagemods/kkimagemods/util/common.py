@@ -88,3 +88,6 @@ def conv_str_auto(string):
 
 def basename_url(url: str) -> str:
     return url[url.rfind("/")+1:]
+
+def get_filename(path: str):
+    return ".".join(path.split(".")[:-1])

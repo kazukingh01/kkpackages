@@ -12,7 +12,7 @@ import json, datetime, glob, os, shutil, sys
 from typing import List
 
 # my package
-from kkimagemods.util.common import correct_dirpath, check_type, makedirs, get_file_list
+from kkimagemods.util.common import correct_dirpath, check_type, makedirs, get_file_list, get_filename
 from kkimagemods.util.logger import set_logger
 logger = set_logger(__name__)
 
@@ -39,7 +39,11 @@ def coco_info(
 class Ndds2Coco:
     """NDDS output convert to Coco format"""
 
-    def __init__(self):
+    def __init__(
+        self,
+        ignore_jsons: List[str] = ["_camera_settings.json", "_object_settings.json"],
+        setting_json_fname: str = "_object_settings.json",
+    ):
         """
         Parmas::
             info: 'info' key of coco format.
@@ -50,7 +54,8 @@ class Ndds2Coco:
         self.images  = pd.DataFrame()
         self.df_ndds = pd.DataFrame()
         self.instances = {}
-        self.ignore_jsons = ["_camera_settings.json", "_object_settings.json"]
+        self.ignore_jsons = ignore_jsons
+        self.setting_json_fname = setting_json_fname
         self.convert_mode = None
         self.instance_merge = None
         logger.debug("Set instance: Ndds2Coco.")
@@ -200,7 +205,7 @@ class Ndds2Coco:
                 self.instances = {x: [dict_color[x]] for x in dict_color}
         
         elif self.convert_mode == "is":
-            self.read_object_setting(correct_dirpath(dirpath) + "_object_settings.json")
+            self.read_object_setting(correct_dirpath(dirpath) + self.setting_json_fname)
         
         else:
             logger.raise_error(f"mode: {mode} is not expected mode.")
@@ -298,7 +303,7 @@ class Ndds2Coco:
         logger.debug("END")
 
 
-    def read_ndds_output_all(self, dirpath: str):
+    def read_ndds_output_all(self, dirpath: str, visibility_threshold: float=0.1):
         """
         Read NDDS ouptut files and segment objects with color parameters got at set_base_parameter()
         Params::
@@ -317,7 +322,7 @@ class Ndds2Coco:
 
         for x in self.__get_json_files(dirpath):
             logger.info(f"read file: {x}")
-            self.__read_ndds_output(x)
+            self.__read_ndds_output(x, visibility_threshold=visibility_threshold)
 
         # 型の変換
         for x in ["height", "width"]:
@@ -520,7 +525,7 @@ class CocoManager:
         # file name が同じで path が違うものがあればチェックする
         se = self.df_json.groupby("images_file_name")["images_coco_url"].apply(lambda x: x.unique())
         if (se.apply(lambda x: len(x) > 1)).sum() > 0:
-            raise Exception(f"same file name: [{se[se.apply(lambda x: len(x) > 1)].index.values}]")
+            logger.warning(f"same file name: [{se[se.apply(lambda x: len(x) > 1)].index.values}]")
 
 
     def re_index(self, check_file_exist_dir: str=None):
@@ -580,15 +585,22 @@ class CocoManager:
         return strjson.replace('"%%null%%"', 'null')
 
 
-    def save(self, filename: str, save_images_path: str = None, exist_ok = False, remake = False):
+    def save(self, filepath: str, save_images_path: str = None, exist_ok = False, remake = False):
         if save_images_path is not None:
             save_images_path = correct_dirpath(save_images_path)
             makedirs(save_images_path, exist_ok = exist_ok, remake = remake)
+            # 同名ファイルはrename する
+            dfwk = self.df_json.groupby(["images_file_name","images_coco_url"]).size().reset_index()
+            dfwk["images_file_name"] = dfwk.groupby("images_file_name")["images_file_name"].apply(lambda x: pd.Series([get_filename(y)+"."+str(i)+".png" for i, y in enumerate(x)]) if x.shape[0] > 1 else x).values
+            self.df_json["images_file_name"] = self.df_json["images_coco_url"].map(dfwk.set_index("images_coco_url")["images_file_name"].to_dict())
             # image copy
-            for x in self.df_json["images_coco_url"].unique():
-                shutil.copy2(x, save_images_path)
+            for x, y in dfwk[["images_coco_url", "images_file_name"]].values:
+                shutil.copy2(x, save_images_path+y)
+            # coco url の file name を変更しておく
+            self.df_json["images_coco_url"] = save_images_path + self.df_json["images_file_name"]
+            self.re_index()
 
-        with open(filename, "w") as f:
+        with open(filepath, "w") as f:
             f.write(self.to_coco_format())
     
 
