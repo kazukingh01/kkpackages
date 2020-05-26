@@ -17,6 +17,7 @@ from detectron2.utils.logger import setup_logger
 from detectron2.data.dataset_mapper import DatasetMapper
 from detectron2.data import detection_utils as utils
 from detectron2.data import transforms as T
+from fvcore.common.config import CfgNode
 setup_logger()
 
 from fvcore.common.file_io import PathManager
@@ -28,114 +29,115 @@ from kkimagemods.lib.coco import coco_info, CocoManager
 from kkimagemods.util.images import drow_bboxes
 from imageaug import AugHandler, Augmenter as aug
 
+
 class MyDet2(DefaultTrainer):
     def __init__(
             self,
             # coco dataset
-            train_dataset_name: str=None, test_dataset_name: str=None, coco_json_path: str=None, image_root: str=None,
+            dataset_name: str = None, coco_json_path: str=None, image_root: str=None,
             # train params
             cfg=None, max_iter: int=100, is_train: bool=True, aug_json_file_path: str=None, 
             # test params
             resize=True,
             # train and test params
             model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", weight_path: str=None, 
-            n_classes: int=1, input_size: tuple=(800, 1333), threshold: float=0.2, outdir: str="./output"
+            classes: List[str] = None, input_size: tuple=(800, 1333), threshold: float=0.2, outdir: str="./output"
         ):
         # coco dataset
-        self.train_dataset_name = train_dataset_name
+        self.dataset_name       = dataset_name
+        self.model_zoo_path     = model_zoo_path
         self.coco_json_path     = coco_json_path
         self.coco_json_path_org = coco_json_path
         self.image_root         = image_root
         self.is_train           = is_train
-        self.mapper             = None
-
-        if is_train:
+        self.cfg                = cfg if cfg is not None else self.set_config(
+            weight_path=weight_path, threshold=threshold, 
+            max_iter=max_iter, classes=classes, input_size=input_size, outdir=outdir
+        )
+        self.mapper = None if aug_json_file_path is None else MyMapper(self.cfg, aug_json_file_path, is_train=self.is_train)
+        self.__register_coco_instances() # Coco dataset setting
+        if self.is_train:
             # train setting
-            ## Coco dataset setting
-            self.__register_coco_instances()
-            self.cfg = cfg if cfg is not None else self.set_config(model_zoo_path, train_dataset_name, weight_path=weight_path, test_dataset_name=test_dataset_name, threshold=threshold, max_iter=max_iter, n_classes=n_classes, input_size=input_size, outdir=outdir)
             os.makedirs(self.cfg.OUTPUT_DIR, exist_ok=True) # この宣言は先にする
-            super().__init__(self.cfg)
-            if aug_json_file_path is not None: self.mapper = MyMapper(self.cfg, aug_json_file_path, is_train=self.is_train)
-            self.__set_dataloader()
+            super().__init__(self.cfg) # train の時しか init しない
             self.predictor = None
             self.resume_or_load(resume=False) # Falseだとload the model specified by the config (skip all checkpointables).
+
+        # DefaultPredictor で使いそうなパラメータ. train 持も train後に使う可能性があるので定義しておく
+        if classes is not None:
+            # train 時は Default Trainer の init の中で処理してくれてそう.
+            self.cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(classes)
+            MetadataCatalog.get(self.dataset_name).thing_classes = classes
         else:
+            try:
+                self.cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(MetadataCatalog.get(self.dataset_name).__getattribute__("thing_classes"))
+            except AttributeError:
+                self.cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
+
+        # この定義は最後がいいかも
+        if self.is_train == False:
             # test setting
-            self.cfg = cfg if cfg is not None else self.set_config_basic(model_zoo_path, n_classes, input_size, outdir=outdir)
-            self.cfg.DATASETS.TEST = (test_dataset_name, )
             self.set_predictor(weight_path, threshold=threshold, resize=resize)
 
 
     def __register_coco_instances(self):
          # この関数で内部のDatasetCatalog, MetadataCatalogにCoco情報をset している
-        register_coco_instances(self.train_dataset_name, {}, self.coco_json_path, self.image_root)
-    
-
-    def __set_dataloader(self):
-        if self.mapper is not None:
-            self.data_loader       = build_detection_train_loader(self.cfg, mapper=self.mapper)
-            self._data_loader_iter = iter(self.data_loader)
+        register_coco_instances(self.dataset_name, {}, self.coco_json_path, self.image_root)
 
 
-    @classmethod
-    def set_config_basic(cls, model_zoo_path, n_classes, input_size: tuple, outdir: str="./output"):
+    # override. super().__init__ 内でこの関数が呼ばれる
+    def build_train_loader(self, cfg) -> torch.utils.data.DataLoader:
+        return build_detection_train_loader(cfg, mapper=self.mapper)
+
+
+    def set_config(
+        self, weight_path: str=None, threshold: float=0.2, max_iter: int=100, 
+        classes: List[str]=None, input_size: tuple=(800,1333,), outdir: str="./output"
+    ) -> CfgNode:
         """
         see https://detectron2.readthedocs.io/modules/config.html#detectron2.config.CfgNode
         """
-        ## predict するのに最低限これだけの記述が必要
+        # common setting
         cfg = get_cfg()
-        cfg.merge_from_file(model_zoo.get_config_file(model_zoo_path))
-        cfg.MODEL.ROI_HEADS.NUM_CLASSES = n_classes # テスト時はなんか指定しないと動かなかった？
+        cfg.merge_from_file(model_zoo.get_config_file(self.model_zoo_path))
         cfg.OUTPUT_DIR = outdir
-        cfg.INPUT.MIN_SIZE_TEST = input_size[0]
-        cfg.INPUT.MAX_SIZE_TEST = input_size[1]
-        return cfg
-
-
-    @classmethod
-    def set_config(cls, model_zoo_path: str, train_dataset_name: str, weight_path: str=None, test_dataset_name: str=None, threshold: float=0.2, max_iter: int=100, n_classes: int=1, input_size: tuple=(800,1333,), outdir: str="./output"):
-        if model_zoo_path is None or train_dataset_name is None: raise Exception("train_dataset_name is needed !!")
-        cfg = cls.set_config_basic(model_zoo_path, n_classes, input_size, outdir=outdir)
-        #cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
-        #cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_X_101_32x8d_FPN_3x.yaml"))
-        cfg.DATASETS.TRAIN = (train_dataset_name, ) # DatasetCatalog, MetadataCatalog の中で自分でsetした"my_dataset_train"を指定
-        cfg.DATASETS.TEST  = ((test_dataset_name if test_dataset_name is not None else train_dataset_name),)
-        cfg.MODEL.WEIGHTS = (model_zoo.get_checkpoint_url(model_zoo_path)) if weight_path is None else weight_path
-        #cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")  #  Let training initialize from model zoo
-        #cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_X_101_32x8d_FPN_3x.yaml")  # Let training initialize from model zoo
-        cfg.SOLVER.BASE_LR = 0.001 # pick a good LR
-        cfg.INPUT.MIN_SIZE_TRAIN = input_size[0]
-        cfg.INPUT.MAX_SIZE_TRAIN = input_size[1]
+        cfg.DATASETS.TRAIN = (self.dataset_name, ) # DatasetCatalog, MetadataCatalog の中で自分でsetした"my_dataset_train"を指定
+        cfg.DATASETS.TEST  = (self.dataset_name, )
+        cfg.MODEL.WEIGHTS = (model_zoo.get_checkpoint_url(self.model_zoo_path)) if weight_path is None else weight_path
         cfg.DATALOADER.NUM_WORKERS = 1
         cfg.SOLVER.IMS_PER_BATCH   = 1
         cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128 # faster, and good enough for this toy dataset (default: 512)
-        cfg.SOLVER.MAX_ITER = max_iter    # 300 iterations seems good enough for this toy dataset; you may need to train longer for a practical dataset
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = threshold   # set the testing threshold for this model
-        #cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(MetadataCatalog.get(train_dataset_name).thing_classes)
-
+        if self.is_train:
+            cfg.SOLVER.BASE_LR = 0.001 # pick a good LR
+            cfg.INPUT.MIN_SIZE_TRAIN = input_size[0]
+            cfg.INPUT.MAX_SIZE_TRAIN = input_size[1]
+            cfg.SOLVER.MAX_ITER = max_iter    # 300 iterations seems good enough for this toy dataset; you may need to train longer for a practical dataset
+        else:
+            cfg.INPUT.MIN_SIZE_TEST = input_size[0]
+            cfg.INPUT.MAX_SIZE_TEST = input_size[1]
         return cfg
 
 
-    def get_predictor(self) -> DefaultPredictor:
+    def train(self):
+        makedirs(self.cfg.OUTPUT_DIR, exist_ok=True, remake=True)
+        super().train()
         self.cfg.MODEL.WEIGHTS = os.path.join(self.cfg.OUTPUT_DIR, "model_final.pth")
-        predictor = DefaultPredictor(self.cfg)
-        return predictor
-    
+        self.predictor = self.get_predictor()
 
-    def set_predictor(self, weight_path, threshold: float=None, resize: bool=True):
+
+    def get_predictor(self) -> DefaultPredictor:
+        predictor = MyPredictor(self.cfg, resize=True)
+        return predictor
+
+
+    def set_predictor(self, weight_path: str, threshold: float=None, resize: bool=True):
         self.cfg.OUTPUT_DIR    = os.path.dirname(weight_path)
         self.cfg.MODEL.WEIGHTS = os.path.join(self.cfg.OUTPUT_DIR, os.path.basename(weight_path))
         if threshold is not None:
             self.cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = threshold   # set the testing threshold for this model
         self.predictor = MyPredictor(self.cfg, resize=resize)
 
-
-    def train(self):
-        makedirs(self.cfg.OUTPUT_DIR, exist_ok=True, remake=True)
-        super().train()
-        self.predictor = self.get_predictor()
-    
 
     def predict(self, data: np.ndarray):
         if self.predictor is None:
@@ -155,10 +157,19 @@ class MyDet2(DefaultTrainer):
         return output_list
 
 
-    def show(self, img: np.ndarray) -> np.ndarray:
+    def show(self, img: np.ndarray, add_padding: int=0) -> np.ndarray:
         from detectron2.data import MetadataCatalog
-        metadata = MetadataCatalog.get(self.cfg.DATASETS.TEST[0])
-        output = self.predict(img)
+        metadata = MetadataCatalog.get(self.dataset_name)
+        output   = self.predict(img)
+        for i in range(output["instances"].get("pred_boxes").tensor.shape[0]):
+            for j in range(4):
+                output["instances"].get("pred_boxes").tensor[i][j] += add_padding
+        # padding. annotation が見えなくなる場合もあるため
+        if add_padding > 0:
+            img = cv2.copyMakeBorder(
+                img, add_padding, add_padding, add_padding, add_padding,
+                cv2.BORDER_CONSTANT, value=[0, 0, 0]
+            )
         v = Visualizer(img[:, :, ::-1],
                 metadata=metadata, 
                 scale=0.8, 
@@ -294,10 +305,10 @@ class MyDet2(DefaultTrainer):
 
         # 作り直したcocoで再度読み込みさせる
         self.coco_json_path = self.coco_json_path + ".cocomanager.json"
-        del DatasetCatalog. _REGISTERED[  self.train_dataset_name] # key を削除しないと再登録できない
-        del MetadataCatalog._NAME_TO_META[self.train_dataset_name] # key を削除しないと再登録できない
+        del DatasetCatalog. _REGISTERED[  self.dataset_name] # key を削除しないと再登録できない
+        del MetadataCatalog._NAME_TO_META[self.dataset_name] # key を削除しないと再登録できない
         self.__register_coco_instances()
-        self.__set_dataloader()
+        super().__init__(self.cfg)
         makedirs(outdir, exist_ok=True, remake=True)
         count = 0
         for i, x in enumerate(self.data_loader):
@@ -308,11 +319,11 @@ class MyDet2(DefaultTrainer):
             count += 1
             if count > n_output: break
 
-        del DatasetCatalog. _REGISTERED[  self.train_dataset_name] # key を削除しないと再登録できない
-        del MetadataCatalog._NAME_TO_META[self.train_dataset_name] # key を削除しないと再登録できない
+        del DatasetCatalog. _REGISTERED[  self.dataset_name] # key を削除しないと再登録できない
+        del MetadataCatalog._NAME_TO_META[self.dataset_name] # key を削除しないと再登録できない
         self.coco_json_path = self.coco_json_path_org
         self.__register_coco_instances()
-        self.__set_dataloader()
+        super().__init__(self.cfg)
 
 
 class MyPredictor(DefaultPredictor):
