@@ -648,6 +648,61 @@ class CocoManager:
             cv2.imwrite(outdir + x, img)
 
 
+    def scale_bbox(self, target: dict = {}, padding_all: int=None):
+        """
+        bbox を広げたり縮めたりする
+        Params:
+            target:
+                dict: {categories_name: scale} の形式で指定する. 複数OK, 
+                sclae: int or float. int の場合は固定pixel, scale は bboxを等倍する
+            padding_all:
+                None でないなら target を無視しして全ての annotation に適用する
+        """
+        logger.info("START")
+        df = self.df_json.copy()
+        if padding_all is not None and type(padding_all) in [float, int]:
+            scale = padding_all
+            if   type(scale) == int:
+                df["annotations_bbox"] = df["annotations_bbox"].apply(lambda x: [x[0] - scale, x[1] - scale, x[2] + 2*scale, x[3] + 2*scale])
+            elif type(scale) == float:
+                df["annotations_bbox"] = df["annotations_bbox"].apply(
+                    lambda x: [x[0] - (x[2] * scale - x[2])/2., x[1] - (x[3] * scale - x[3])/2., x[2] * scale, x[3] * scale]
+                )
+        else:
+            for x in target.keys():
+                dfwk = df[df["categories_name"] == x].copy()
+                scale = target[x]
+                if   type(scale) == int:
+                    dfwk["annotations_bbox"] = dfwk["annotations_bbox"].apply(lambda x: [x[0] - scale, x[1] - scale, x[2] + 2*scale, x[3] + 2*scale])
+                elif type(scale) == float:
+                    dfwk["annotations_bbox"] = dfwk["annotations_bbox"].apply(
+                        lambda x: [x[0] - (x[2] * scale - x[2])/2., x[1] - (x[3] * scale - x[3])/2., x[2] * scale, x[3] * scale]
+                    )
+                df.loc[dfwk.index, "annotations_bbox"] = dfwk["annotations_bbox"].copy()
+        # scale の結果、bbox が画面からはみ出している場合があるので修正する
+        df = self.fix_bbox_value(df)
+        self.df_json = df.copy()
+        logger.info("END")
+
+
+    @classmethod
+    def fix_bbox_value(cls, df: pd.DataFrame) -> pd.DataFrame:
+        ## 参照形式で修正する.
+        df = df.copy()
+        for listwk, w, h in df[["annotations_bbox", "images_width", "images_height"]].values:
+            ### 先に w,h を計算しないと値がおかしくなる
+            if listwk[0] < 0:             listwk[2] = int(listwk[2] + listwk[0]) # 始点xが左側の枠外の場合
+            if listwk[0] + listwk[2] > w: listwk[2] = int(w  - listwk[0]) # 始点xが枠内で始点x+幅が右側の枠外になる場合.
+            if listwk[2] > w:             listwk[2] = int(w)              # それでもまだ大きい場
+            if listwk[1] < 0:             listwk[3] = int(listwk[3] + listwk[1]) # 始点yが下側の枠外の場合
+            if listwk[1] + listwk[3] > h: listwk[3] = int(h  - listwk[1]) # 始点yが枠内で始点y+高さが上側の枠外になる場合.
+            if listwk[3] > h:             listwk[3] = int(h)              # それでもまだ大きい場
+            listwk[0] = 0 if listwk[0] < 0 else listwk[0] # 0 以下は0に
+            listwk[1] = 0 if listwk[1] < 0 else listwk[1]
+        df["annotations_bbox"] = df["annotations_bbox"].apply(lambda x: [int(_x) for _x in x])
+        return df
+
+
     def padding_image_and_re_annotation(
         self, add_padding: int, root_image: str, outdir: str, 
         outfilename: str="output.json", fill_color=(0,0,0,), exist_ok: bool=False, remake: bool=False

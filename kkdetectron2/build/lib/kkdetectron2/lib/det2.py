@@ -37,8 +37,7 @@ class MyDet2(DefaultTrainer):
             dataset_name: str = None, coco_json_path: str=None, image_root: str=None,
             # train params
             cfg=None, max_iter: int=100, is_train: bool=True, aug_json_file_path: str=None, 
-            # test params
-            resize=True,
+            base_lr: float=0.01, num_workers: int=2, 
             # train and test params
             model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", weight_path: str=None, 
             classes: List[str] = None, input_size: tuple=(800, 1333), threshold: float=0.2, outdir: str="./output"
@@ -50,12 +49,19 @@ class MyDet2(DefaultTrainer):
         self.coco_json_path_org = coco_json_path
         self.image_root         = image_root
         self.is_train           = is_train
+        self.__register_coco_instances() # Coco dataset setting
         self.cfg                = cfg if cfg is not None else self.set_config(
-            weight_path=weight_path, threshold=threshold, 
-            max_iter=max_iter, classes=classes, input_size=input_size, outdir=outdir
+            weight_path=weight_path, threshold=threshold, max_iter=max_iter, num_workers=num_workers, 
+            base_lr=base_lr, classes=classes, input_size=input_size, outdir=outdir
         )
         self.mapper = None if aug_json_file_path is None else MyMapper(self.cfg, aug_json_file_path, is_train=self.is_train)
-        self.__register_coco_instances() # Coco dataset setting
+        # DefaultPredictor で使いそうなパラメータ. train 持も train後に使う可能性があるので定義しておく
+        if classes is not None:
+            if self.is_train == False: raise Exception("If you use DefaultPredictor, 'classes' is needed to set.")
+            # train 時は Default Trainer の init の中で処理してくれてそう.
+            self.cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(classes)
+            MetadataCatalog.get(self.dataset_name).thing_classes = classes
+
         if self.is_train:
             # train setting
             os.makedirs(self.cfg.OUTPUT_DIR, exist_ok=True) # この宣言は先にする
@@ -63,21 +69,10 @@ class MyDet2(DefaultTrainer):
             self.predictor = None
             self.resume_or_load(resume=False) # Falseだとload the model specified by the config (skip all checkpointables).
 
-        # DefaultPredictor で使いそうなパラメータ. train 持も train後に使う可能性があるので定義しておく
-        if classes is not None:
-            # train 時は Default Trainer の init の中で処理してくれてそう.
-            self.cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(classes)
-            MetadataCatalog.get(self.dataset_name).thing_classes = classes
-        else:
-            try:
-                self.cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(MetadataCatalog.get(self.dataset_name).__getattribute__("thing_classes"))
-            except AttributeError:
-                self.cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
-
         # この定義は最後がいいかも
         if self.is_train == False:
             # test setting
-            self.set_predictor(weight_path, threshold=threshold, resize=resize)
+            self.set_predictor()
 
 
     def __register_coco_instances(self):
@@ -91,8 +86,8 @@ class MyDet2(DefaultTrainer):
 
 
     def set_config(
-        self, weight_path: str=None, threshold: float=0.2, max_iter: int=100, 
-        classes: List[str]=None, input_size: tuple=(800,1333,), outdir: str="./output"
+        self, weight_path: str=None, threshold: float=0.2, max_iter: int=100, num_workers: int=2, 
+        classes: List[str]=None, base_lr: float=0.01, input_size: tuple=(800,1333,), outdir: str="./output"
     ) -> CfgNode:
         """
         see https://detectron2.readthedocs.io/modules/config.html#detectron2.config.CfgNode
@@ -103,19 +98,18 @@ class MyDet2(DefaultTrainer):
         cfg.OUTPUT_DIR = outdir
         cfg.DATASETS.TRAIN = (self.dataset_name, ) # DatasetCatalog, MetadataCatalog の中で自分でsetした"my_dataset_train"を指定
         cfg.DATASETS.TEST  = (self.dataset_name, )
-        cfg.MODEL.WEIGHTS = (model_zoo.get_checkpoint_url(self.model_zoo_path)) if weight_path is None else weight_path
-        cfg.DATALOADER.NUM_WORKERS = 1
-        cfg.SOLVER.IMS_PER_BATCH   = 1
+        cfg.DATALOADER.NUM_WORKERS = num_workers
+        cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(self.model_zoo_path) if weight_path is None else weight_path
+        cfg.SOLVER.IMS_PER_BATCH   = num_workers
         cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128 # faster, and good enough for this toy dataset (default: 512)
-        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = threshold   # set the testing threshold for this model
+        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = threshold if threshold is not None else 0.2  # set the testing threshold for this model
+        cfg.INPUT.MIN_SIZE_TRAIN = input_size[0]
+        cfg.INPUT.MAX_SIZE_TRAIN = input_size[1]
+        cfg.INPUT.MIN_SIZE_TEST = input_size[0]
+        cfg.INPUT.MAX_SIZE_TEST = input_size[1]
         if self.is_train:
-            cfg.SOLVER.BASE_LR = 0.001 # pick a good LR
-            cfg.INPUT.MIN_SIZE_TRAIN = input_size[0]
-            cfg.INPUT.MAX_SIZE_TRAIN = input_size[1]
+            cfg.SOLVER.BASE_LR = base_lr # pick a good LR
             cfg.SOLVER.MAX_ITER = max_iter    # 300 iterations seems good enough for this toy dataset; you may need to train longer for a practical dataset
-        else:
-            cfg.INPUT.MIN_SIZE_TEST = input_size[0]
-            cfg.INPUT.MAX_SIZE_TEST = input_size[1]
         return cfg
 
 
@@ -123,25 +117,16 @@ class MyDet2(DefaultTrainer):
         makedirs(self.cfg.OUTPUT_DIR, exist_ok=True, remake=True)
         super().train()
         self.cfg.MODEL.WEIGHTS = os.path.join(self.cfg.OUTPUT_DIR, "model_final.pth")
-        self.predictor = self.get_predictor()
+        self.set_predictor()
 
 
-    def get_predictor(self) -> DefaultPredictor:
-        predictor = MyPredictor(self.cfg, resize=True)
-        return predictor
-
-
-    def set_predictor(self, weight_path: str, threshold: float=None, resize: bool=True):
-        self.cfg.OUTPUT_DIR    = os.path.dirname(weight_path)
-        self.cfg.MODEL.WEIGHTS = os.path.join(self.cfg.OUTPUT_DIR, os.path.basename(weight_path))
-        if threshold is not None:
-            self.cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = threshold   # set the testing threshold for this model
-        self.predictor = MyPredictor(self.cfg, resize=resize)
+    def set_predictor(self):
+        self.predictor = DefaultPredictor(self.cfg)
 
 
     def predict(self, data: np.ndarray):
         if self.predictor is None:
-            self.predictor = self.get_predictor()
+            self.set_predictor()
         return self.predictor(data)
     
 
@@ -326,42 +311,11 @@ class MyDet2(DefaultTrainer):
         super().__init__(self.cfg)
 
 
-class MyPredictor(DefaultPredictor):
-
-    def __init__(self, cfg, resize=False):
-        super().__init__(cfg)
-        self._resize = resize
-    
-    def __call__(self, original_image):
-        """
-        Args:
-            original_image (np.ndarray): an image of shape (H, W, C) (in BGR order).
-
-        Returns:
-            predictions (dict):
-                the output of the model for one image only.
-                See :doc:`/tutorials/models` for details about the format.
-        """
-        with torch.no_grad():  # https://github.com/sphinx-doc/sphinx/issues/4258
-            # Apply pre-processing to image.
-            if self.input_format == "RGB":
-                # whether the model expects BGR inputs or RGB
-                original_image = original_image[:, :, ::-1]
-            height, width = original_image.shape[:2]
-            image = original_image
-            if self._resize:
-                image = self.transform_gen.get_transform(original_image).apply_image(original_image)
-            image = torch.as_tensor(image.astype("float32").transpose(2, 0, 1))
-
-            inputs = {"image": image, "height": height, "width": width}
-            predictions = self.model([inputs])[0]
-            return predictions
-
-
 class MyMapper(DatasetMapper):
     def __init__(self, cfg, json_file_path, is_train=True):
         super().__init__(cfg, is_train=is_train)
         self.aug_handler = AugHandler.load_from_path(json_file_path)
+        if is_train: self.tfm_gens = self.tfm_gens[:-1]
     
     def __call__(self, dataset_dict):
         """
@@ -450,3 +404,51 @@ class MyMapper(DatasetMapper):
             sem_seg_gt = torch.as_tensor(sem_seg_gt.astype("long"))
             dataset_dict["sem_seg"] = sem_seg_gt
         return dataset_dict
+
+
+
+from detectron2.engine import DefaultTrainer
+from detectron2.config import get_cfg
+from detectron2.data import DatasetCatalog, MetadataCatalog
+from detectron2.data.datasets import register_coco_instances
+from detectron2.utils.visualizer import Visualizer
+class Det2Debug(DefaultTrainer):
+    """
+    https://colab.research.google.com/drive/16jcaJoc6bCFAQ96jDe2HwtXj7BMD_-m5#scrollTo=ZyAvNCJMmvFF
+    公式の tutorial を参考にして作成した最も simple な class. debug で使用する
+    """
+    def __init__(self, dataset_name: str, coco_json_path: str, image_root: str):
+        self._dataset_name = dataset_name
+        register_coco_instances(dataset_name, {}, coco_json_path, image_root)
+        cfg = get_cfg()
+        cfg.merge_from_file(model_zoo.get_config_file("COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml"))
+        cfg.DATASETS.TRAIN = (dataset_name,)
+        cfg.DATASETS.TEST = ()
+        cfg.DATALOADER.NUM_WORKERS = 2
+        cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml")  # Let training initialize from model zoo
+        cfg.SOLVER.IMS_PER_BATCH = 2
+        cfg.SOLVER.BASE_LR = 0.01  # pick a good LR
+        cfg.SOLVER.MAX_ITER = 300    # 300 iterations seems good enough for this toy dataset; you may need to train longer for a practical dataset
+        cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128   # faster, and good enough for this toy dataset (default: 512)
+        cfg.MODEL.ROI_HEADS.NUM_CLASSES = 10  # only has one class (ballon)
+        super().__init__(cfg)
+        self.resume_or_load(resume=False)
+    
+    def set_predictor(self):
+        self.cfg.MODEL.WEIGHTS = os.path.join(self.cfg.OUTPUT_DIR, "model_final.pth")
+        self.cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.7   # set the testing threshold for this model
+        self.cfg.DATASETS.TEST = (self._dataset_name, )
+        self.predictor = DefaultPredictor(self.cfg)        
+
+    def show(self, file_path: str):
+        metadata = MetadataCatalog.get(self._dataset_name)
+        im = cv2.imread(file_path)
+        outputs = self.predictor(im)
+        v = Visualizer(im[:, :, ::-1],
+                    metadata=metadata, 
+                    scale=0.8, 
+                    instance_mode=None   # remove the colors of unsegmented pixels
+        )
+        v = v.draw_instance_predictions(outputs["instances"].to("cpu"))
+        cv2.imshow("test", v.get_image()[:, :, ::-1])
+        cv2.waitKey(0)
