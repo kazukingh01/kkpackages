@@ -536,6 +536,15 @@ class CocoManager:
         if check_file_exist_dir is not None:
             filelist = [os.path.basename(x) for x in get_file_list(check_file_exist_dir)]
             self.df_json = self.df_json[self.df_json["images_file_name"].isin(filelist)]
+
+        # coco format に足りないカラムがあれば追加する
+        for name, default_value in zip(
+            ["categories_keypoints", "categories_skeleton"], 
+            [[], [], ]
+        ):
+            if (self.df_json.columns == name).sum() == 0:
+                self.df_json[name] = [default_value for _ in np.arange(self.df_json.shape[0])]
+
         # image id
         dictwk = {x:i  for i, x in enumerate(np.sort(self.df_json["images_coco_url"].unique()))}
         self.df_json["images_id"]            = self.df_json["images_coco_url"].map(dictwk)

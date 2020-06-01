@@ -37,7 +37,7 @@ class MyDet2(DefaultTrainer):
             dataset_name: str = None, coco_json_path: str=None, image_root: str=None,
             # train params
             cfg=None, max_iter: int=100, is_train: bool=True, aug_json_file_path: str=None, 
-            base_lr: float=0.01, num_workers: int=2, 
+            base_lr: float=0.01, num_workers: int=2, resume: bool=False, 
             # train and test params
             model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", weight_path: str=None, 
             classes: List[str] = None, input_size: tuple=(800, 1333), threshold: float=0.2, outdir: str="./output"
@@ -54,20 +54,17 @@ class MyDet2(DefaultTrainer):
             weight_path=weight_path, threshold=threshold, max_iter=max_iter, num_workers=num_workers, 
             base_lr=base_lr, classes=classes, input_size=input_size, outdir=outdir
         )
+        # classes は強制でセットする
+        self.cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(classes)
+        MetadataCatalog.get(self.dataset_name).thing_classes = classes
         self.mapper = None if aug_json_file_path is None else MyMapper(self.cfg, aug_json_file_path, is_train=self.is_train)
-        # DefaultPredictor で使いそうなパラメータ. train 持も train後に使う可能性があるので定義しておく
-        if classes is not None:
-            if self.is_train == False: raise Exception("If you use DefaultPredictor, 'classes' is needed to set.")
-            # train 時は Default Trainer の init の中で処理してくれてそう.
-            self.cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(classes)
-            MetadataCatalog.get(self.dataset_name).thing_classes = classes
 
         if self.is_train:
             # train setting
             os.makedirs(self.cfg.OUTPUT_DIR, exist_ok=True) # この宣言は先にする
             super().__init__(self.cfg) # train の時しか init しない
             self.predictor = None
-            self.resume_or_load(resume=False) # Falseだとload the model specified by the config (skip all checkpointables).
+            self.resume_or_load(resume=resume) # Falseだとload the model specified by the config (skip all checkpointables).
 
         # この定義は最後がいいかも
         if self.is_train == False:
@@ -114,7 +111,7 @@ class MyDet2(DefaultTrainer):
 
 
     def train(self):
-        makedirs(self.cfg.OUTPUT_DIR, exist_ok=True, remake=True)
+        makedirs(self.cfg.OUTPUT_DIR, exist_ok=True, remake=False)
         super().train()
         self.cfg.MODEL.WEIGHTS = os.path.join(self.cfg.OUTPUT_DIR, "model_final.pth")
         self.set_predictor()
@@ -128,17 +125,17 @@ class MyDet2(DefaultTrainer):
         if self.predictor is None:
             self.set_predictor()
         return self.predictor(data)
-    
 
-    def predict_and_bbox_image(self, data: np.ndarray) -> List[np.ndarray]:
+
+    def img_crop_bbox(self, img: np.ndarray, padding: int=0) -> List[np.ndarray]:
         output_list = []
         # 推論
-        output = self.predict(data)
+        output = self.predictor(img)
         output = output["instances"]
         ndf = output.get("pred_boxes").to("cpu").tensor.numpy().copy()
         for x1, y1, x2, y2 in ndf:
-            img = data[int(y1):int(y2), int(x1):int(x2), :].copy()
-            output_list.append(img)
+            imgwk = img[int(y1)-padding:int(y2)+padding, int(x1)-padding:int(x2)+padding, :].copy()
+            output_list.append(imgwk)
         return output_list
 
 
@@ -156,9 +153,9 @@ class MyDet2(DefaultTrainer):
                 cv2.BORDER_CONSTANT, value=[0, 0, 0]
             )
         v = Visualizer(img[:, :, ::-1],
-                metadata=metadata, 
-                scale=0.8, 
-                instance_mode=None #ColorMode.IMAGE_BW # remove the colors of unsegmented pixels
+            metadata=metadata, 
+            scale=0.8, 
+            instance_mode=None #ColorMode.IMAGE_BW # remove the colors of unsegmented pixels
         )
         v = v.draw_instance_predictions(output["instances"].to("cpu"))
         return v.get_image()[:, :, ::-1]
