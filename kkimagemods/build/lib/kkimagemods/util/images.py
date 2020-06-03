@@ -7,7 +7,7 @@ from typing import List, Tuple
 # local lib
 from kkimagemods.util.common import check_type, get_file_list, correct_dirpath, makedirs
 
-def drow_bboxes(img_org: np.ndarray, bboxes: List[List[float]], bbox_type="wh"):
+def drow_bboxes(img_org: np.ndarray, bboxes: List[List[float]], bboxes_class: List[str]=None, bbox_type="wh", color=(0,255,0), thickness: int=1, font_scale: float=1.0):
     """
     bbox を加えて描画していく
 
@@ -28,11 +28,17 @@ def drow_bboxes(img_org: np.ndarray, bboxes: List[List[float]], bbox_type="wh"):
     img = img_org.copy()
     if len(bboxes) == 4 and type(bboxes[0]) != list:
         # bbox が１つの場合
-        img = cv2.rectangle(img, __work(*bboxes, bbox_type) ,(0,255,0),2)
+        p1, p2 = __work(*bboxes, bbox_type)
+        img = cv2.rectangle(img, p1, p2 ,color, thickness=thickness)
+        if bboxes_class is not None:
+            img = cv2.putText(img, bboxes_class, p1, cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness=thickness)
     else:
         # bbox が複数の場合
-        for bbox in bboxes:
-            img = cv2.rectangle(img, *__work(*bbox, bbox_type) ,(0,255,0),2)
+        for i, bbox in enumerate(bboxes):
+            p1, p2 = __work(*bbox, bbox_type)
+            img = cv2.rectangle(img, *__work(*bbox, bbox_type) ,color, thickness=thickness)
+            if bboxes_class is not None:
+                img = cv2.putText(img, bboxes_class[i], p1, cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness=thickness)
     return img
 
 
@@ -237,4 +243,7 @@ def fit_resize(img: np.ndarray, dim: str, scale):
     img = cv2.resize(img , (width_after, height_after)) # 横, 縦
     return img
 
+
+def concat_tile(im_list_2d):
+    return cv2.vconcat([cv2.hconcat(im_list_h) for im_list_h in im_list_2d])
 

@@ -139,7 +139,7 @@ class MyDet2(DefaultTrainer):
         return output_list
 
 
-    def show(self, img: np.ndarray, add_padding: int=0) -> np.ndarray:
+    def show(self, img: np.ndarray, add_padding: int=0, preview: bool=False) -> np.ndarray:
         from detectron2.data import MetadataCatalog
         metadata = MetadataCatalog.get(self.dataset_name)
         output   = self.predict(img)
@@ -158,7 +158,11 @@ class MyDet2(DefaultTrainer):
             instance_mode=None #ColorMode.IMAGE_BW # remove the colors of unsegmented pixels
         )
         v = v.draw_instance_predictions(output["instances"].to("cpu"))
-        return v.get_image()[:, :, ::-1]
+        img_ret = v.get_image()[:, :, ::-1]
+        if preview:
+            cv2.imshow(__name__, img_ret)
+            cv2.waitKey(0)
+        return img_ret
 
 
     def __to_coco(self, img_path: str):

@@ -208,12 +208,12 @@ class Ndds2Coco:
             self.read_object_setting(correct_dirpath(dirpath) + self.setting_json_fname)
         
         else:
-            logger.raise_error(f"mode: {mode} is not expected mode.")
+            logger.raise_error(f"convert_mode: {convert_mode} is not expected mode.")
 
         logger.debug("END")
 
 
-    def read_object_setting(self, json_file_path: str):
+    def read_object_setting(self, json_file_path: str, ignore_disexist_object: bool=True):
         """
         create dictionary {class_name: instance_color}
         """
@@ -223,12 +223,19 @@ class Ndds2Coco:
         instances_org = {}
         for dictwk in fjson["exported_objects"]:
             instances_org[dictwk["class"]] = self.ndds_instanceid_to_color(dictwk["segmentation_instance_id"])
+
         self.instances = {}
         if self.instance_merge is not None:
             for x in self.instance_merge.keys():
                 self.instances[x] = []
                 for y in self.instance_merge[x]: # ここはlist
-                    self.instances[x].append(instances_org[y])
+                    try:
+                        self.instances[x].append(instances_org[y])
+                    except KeyError:
+                        if ignore_disexist_object:
+                            pass
+                        else:
+                            raise Exception(f'we can not fond: {dictwk}')
         else:
             self.instances = {x:[instances_org[x]] for x in instances_org.keys()}
         logger.debug("END")
@@ -443,7 +450,7 @@ class Ndds2Coco:
         return json.dumps(json_dict)
     
 
-    def output_coco_format(self, dirpath: str, category_merge: dict):
+    def output_coco_format(self, out_json_path: str, category_merge: dict, out_images_dir: str=None):
         """
         Output coco format json file and images( only copy images from original files ).
 
@@ -477,17 +484,16 @@ class Ndds2Coco:
         """
         logger.debug("START")
 
-        _dirpath = correct_dirpath(dirpath)
-        os.makedirs(_dirpath + "json",   exist_ok=True)
-        os.makedirs(_dirpath + "images", exist_ok=True)
-
         # json output
-        with open(_dirpath + "json/instances.json", mode="w") as f:
+        with open(out_json_path, mode="w") as f:
             f.write(self.to_coco_format(category_merge=category_merge))
         
         # image copy
-        for x in self.images["image_path"].unique():
-            shutil.copy2(x, _dirpath + "images/")
+        if out_images_dir is not None:
+            out_images_dir = correct_dirpath(out_images_dir)
+            os.makedirs(out_images_dir, exist_ok=True)
+            for x in self.images["image_path"].unique():
+                shutil.copy2(x, out_images_dir)
 
         logger.debug("END")
 

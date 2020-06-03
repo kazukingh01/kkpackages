@@ -41,12 +41,32 @@ def makedirs(dirpath: str, exist_ok: bool = False, remake: bool = False):
 def get_args() -> dict:
     dict_ret = {}
     args = sys.argv
+    dict_ret["__fname"] = args[0]
     for i, x in enumerate(args):
-        if   x[:3] == "---":
+        if   x[:4] == "----":
+            # この引数の後にはLISTで格納する
+            dict_ret[x[4:]] = []
+            for _x in args[i+1:]:
+                if _x[:2] != "--": dict_ret[x[4:]].append(_x)
+                else: break
+        elif x[:3] == "---":
             dict_ret[x[3:]] = True
         elif x[:2] == "--":
             dict_ret[x[2:]] = args[i+1]
     return dict_ret
+
+def check_args(check_list: List[str], caption: str=None):
+    args = get_args()
+    for x in check_list:
+        if args.get(x) is None:
+            print(args)
+            raise Exception(f'"{x}" parameter is needed. '+("" if caption is None else caption))
+
+def str_to_datetime(string: str) -> datetime.datetime:
+    if   strfind(r"^[0-9]+$", string) and len(string) == 14:
+        return datetime.datetime(int(string[0:4]), int(string[4:6]), int(string[6:8]), int(string[8:10]), int(string[10:12]), int(string[12:14]))
+    else:
+        raise ValueError(f"{string} is not converted to datetime.")
 
 def str_to_date(string: str) -> datetime.datetime:
     if   strfind(r"^[0-9]+$", string) and len(string) == 8:
@@ -58,7 +78,24 @@ def str_to_date(string: str) -> datetime.datetime:
         strwk = string.split("-")
         return datetime.datetime(int(strwk[0]), int(strwk[1]), int(strwk[2]))
     else:
-        raise ValueError(f"{str} is not converted to datetime.")
+        raise ValueError(f"{string} is not converted to datetime.")
+
+def str_to_time(string: str) -> datetime.datetime:
+    """
+    datetime.datetimeで返却する日付は2000/01/01 で固定する
+    """
+    if   strfind(r"^[0-9]+$", string) and len(string) == 4:
+        return datetime.datetime(2000, 1, 1, int(string[0:2]), int(string[2:4]), 0)
+    elif strfind(r"^[0-9]+$", string) and len(string) == 6:
+        return datetime.datetime(2000, 1, 1, int(string[0:2]), int(string[2:4]), int(string[4:6]))
+    elif strfind(r"^[0-9][0-9]:[0-9][0-9]$", string):
+        strwk = string.split(":")
+        return datetime.datetime(2000, 1, 1, int(strwk[0]), int(strwk[1]), 0)
+    elif strfind(r"^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]$", string):
+        strwk = string.split(":")
+        return datetime.datetime(2000, 1, 1, int(strwk[0]), int(strwk[1]), int(strwk[2]))
+    else:
+        raise ValueError(f"{string} is not converted to datetime.")
 
 def args_date(*argv) -> Tuple[datetime.datetime]:
     return tuple([(str_to_date(x) if x is not None else None) for x in argv])
