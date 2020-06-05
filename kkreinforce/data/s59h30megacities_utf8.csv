@@ -1,0 +1,478 @@
+country_code	name_jp	name_jps	name_en	name_ens	capital_jp	capital_en	iscapital	lat	lon	pop	pop_year	pop_ref	note_jp
+AZ	アゼルバイジャン共和国	アゼルバイジャン	Republic of Azerbaijan	Azerbaijan	バクー	Baku	1	40.4092617	49.8670924	2254175 	2017	DYB2018	
+AF	アフガニスタン・イスラム共和国	アフガニスタン	Islamic Republic of Afghanistan	Afghanistan	カブール	Kabul	1	34.5553494	69.207486	3817241 	2016	DYB2017	
+US	アメリカ合衆国	アメリカ（米国）	United States of America	United States	サンアントニオ	San Antonio	0	29.4241219	-98.4936282	1492510 	2016	DYB2017	
+US	アメリカ合衆国	アメリカ（米国）	United States of America	United States	サンディエゴ	San Diego	0	32.715738	-117.1610838	1406630 	2016	DYB2017	
+US	アメリカ合衆国	アメリカ（米国）	United States of America	United States	サンノゼ	San Jose	0	37.3382082	-121.8863286	1025350 	2016	DYB2017	
+US	アメリカ合衆国	アメリカ（米国）	United States of America	United States	シカゴ	Chicago	0	41.8781136	-87.6297982	2704958 	2016	DYB2017	
+US	アメリカ合衆国	アメリカ（米国）	United States of America	United States	ダラス	Dallas	0	32.7766642	-96.7969879	1317929 	2016	DYB2017	
+US	アメリカ合衆国	アメリカ（米国）	United States of America	United States	ニューヨーク	New York City	0	40.7127753	-74.0059728	8537673 	2016	DYB2017	
+US	アメリカ合衆国	アメリカ（米国）	United States of America	United States	ヒューストン	Houston	0	29.7604267	-95.3698028	2303482 	2016	DYB2017	
+US	アメリカ合衆国	アメリカ（米国）	United States of America	United States	フィラデルフィア	Philadelphia	0	39.9525839	-75.1652215	1567872 	2016	DYB2017	
+US	アメリカ合衆国	アメリカ（米国）	United States of America	United States	フェニックス	Phoenix	0	33.4483771	-112.0740373	1615017 	2016	DYB2017	
+US	アメリカ合衆国	アメリカ（米国）	United States of America	United States	ロサンゼルス	Los Angeles	0	34.0522342	-118.2436849	3976322 	2016	DYB2017	
+AE	アラブ首長国連邦	アラブ首長国連邦	United Arab Emirates	UAE	ドバイ	Dubai	0	25.2048493	55.2707828	1089000 	2002	DYB2017	
+DZ	アルジェリア民主人民共和国	アルジェリア	People's Democratic Republic of Algeria	Algeria	アルジェ	Algiers	1	36.753768	3.0587561	2712944 	2008	DYB2017	
+DZ	アルジェリア民主人民共和国	アルジェリア	People's Democratic Republic of Algeria	Algeria	オラン	Oran	0	35.6970697	-0.6307988	1165687 	2008	DYB2017	
+AR	アルゼンチン共和国	アルゼンチン	Argentine Republic	Argentina	ブエノスアイレス	Buenos Aires	1	-34.6036844	-58.3815591	13879707 	2016	DYB2017	都市圏の人口
+AR	アルゼンチン共和国	アルゼンチン	Argentine Republic	Argentina	コルドバ	Cordoba	0	-31.4200833	-64.1887761	1525490 	2016	DYB2017	都市圏の人口
+AR	アルゼンチン共和国	アルゼンチン	Argentine Republic	Argentina	メンドーサ	Mendoza	0	-32.8894587	-68.8458386	1094209 	2016	DYB2017	都市圏の人口
+AR	アルゼンチン共和国	アルゼンチン	Argentine Republic	Argentina	ロサリオ	Rosario	0	-32.9442426	-60.6505388	1444436 	2016	DYB2017	都市圏の人口
+AM	アルメニア共和国	アルメニア	Republic of Armenia	Armenia	エレバン	Yerevan	1	40.1791857	44.4991029	1076716 	2017	DYB2018	
+AO	アンゴラ共和国	アンゴラ	Republic of Angola	Angola	ルアンダ	Luanda	1	-8.8399876	13.2894368	2487444 	2018	DYB2018	都市圏の人口
+YE	イエメン共和国	イエメン	Republic of Yemen	Yemen	サヌア	Sana'a	1	15.3694451	44.1910066	1976286 	2009	DYB2017	
+GB	グレートブリテン及び北アイルランド連合王国	イギリス（英国）	United Kingdom of Great Britain and Northern Ireland	United Kingdom	ロンドン	London	1	51.5073509	-0.1277583	8135667 	2011	DYB2017	
+GB	グレートブリテン及び北アイルランド連合王国	イギリス（英国）	United Kingdom of Great Britain and Northern Ireland	United Kingdom	グラスゴー	Glasgow	0	55.864237	-4.251806	1209143 	2011	DYB2017	
+GB	グレートブリテン及び北アイルランド連合王国	イギリス（英国）	United Kingdom of Great Britain and Northern Ireland	United Kingdom	バーミンガム	Birmingham	0	52.486243	-1.890401	1085810 	2011	DYB2017	
+IT	イタリア共和国	イタリア	Italian Republic	Italy	ローマ	Rome	1	41.9027835	12.4963655	2873147 	2017	DYB2018	
+IT	イタリア共和国	イタリア	Italian Republic	Italy	ミラノ	Milano	0	45.4642035	9.189982	1358871 	2017	DYB2018	
+IQ	イラク共和国	イラク	Republic of Iraq	Iraq	バグダッド	Baghdad	1	33.3128057	44.3614875	1211934 	2015	DYB2017	
+IQ	イラク共和国	イラク	Republic of Iraq	Iraq	バスラ	Al-Basrah Qadha Center	0	30.5081033	47.7834888	1225793 	2015	DYB2017	
+IQ	イラク共和国	イラク	Republic of Iraq	Iraq	モスル	Al-Mosul Qadha Center	0	36.3566484	43.1640004	1384260 	2015	DYB2017	
+IR	イラン・イスラム共和国	イラン	The Islamic Republic of Iran	Iran	テヘラン	Tehran	1	35.6891975	51.3889736	8693706 	2016	DYB2017	
+IR	イラン・イスラム共和国	イラン	The Islamic Republic of Iran	Iran	アフヴァーズ	Ahvaz	0	31.3183272	48.6706187	1184788 	2016	DYB2017	
+IR	イラン・イスラム共和国	イラン	The Islamic Republic of Iran	Iran	イスファハン	Isfahan	0	32.6546275	51.6679826	1961260 	2016	DYB2017	
+IR	イラン・イスラム共和国	イラン	The Islamic Republic of Iran	Iran	キャラジ	Karaj	0	35.8400188	50.9390906	1592492 	2016	DYB2017	
+IR	イラン・イスラム共和国	イラン	The Islamic Republic of Iran	Iran	ゴム	Qom	0	34.6399443	50.8759419	1201158 	2016	DYB2017	
+IR	イラン・イスラム共和国	イラン	The Islamic Republic of Iran	Iran	シーラーズ	Shiraz	0	29.5917677	52.5836982	1565572 	2016	DYB2017	
+IR	イラン・イスラム共和国	イラン	The Islamic Republic of Iran	Iran	タブリーズ	Tabriz	0	38.096239	46.2738013	1558693 	2016	DYB2017	
+IR	イラン・イスラム共和国	イラン	The Islamic Republic of Iran	Iran	マシュハド	Mashhad	0	36.2604623	59.6167549	3001184 	2016	DYB2017	
+IN	インド	インド	India	India	デリー	Delhi Municipal Corporation (DMC)	1	28.6139391	77.2090212	11034555 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	アウランガーバード	Aurangabad	0	19.8761653	75.3433139	1175116 	2011	DYB2017	都市圏の人口，マハーラーシュトラ州の都市
+IN	インド	インド	India	India	アグラ	Agra	0	27.1766701	78.0080745	1585704 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	アフマダーバード	Ahmedabad	0	23.022505	72.5713621	5633927 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	アムリトサル	Amritsar	0	31.6339793	74.8722642	1159227 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	アラーハーバード	Allahabad	0	25.4358011	81.846311	1168385 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	インドール	Indore	0	22.7195687	75.8577258	1994397 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ヴァドーダラー	Vadodara	0	22.3071588	73.1812187	1752371 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ヴィシャーカパトナム	Greater Visakhapatnam Municipal Corporation (GVMC)	0	17.6868159	83.2184815	1728128 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ヴィジャヤワーダ	Vijayawada	0	16.5061743	80.6480153	1143232 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ガーズィヤーバード	Ghaziabad	0	28.6691565	77.4537578	1648643 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	カーンプル	Kanpur	0	26.449923	80.3318736	2768057 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	カルヤン	Kalyan	0	19.2403305	73.1305395	1247327 	2011	DYB2017	ドンビブリを含む都市圏の人口（カルヤン・ドンビブリ）
+IN	インド	インド	India	India	グワーリオール	Gwalior	0	26.2182871	78.1828308	1054420 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	コインバトール	Coimbatore	0	11.0168445	76.9558321	1050721 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	コーター	Kota	0	25.2138156	75.8647527	1001694 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	コルカタ	Kolkata	0	22.572646	88.363895	4496694 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ジャイプル	Jaipur	0	26.9124336	75.7872709	3046163 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ジャバルプル	Jabalpur	0	23.181467	79.9864071	1081677 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	シュリーナガル	Srinagar	0	34.0836708	74.7972825	1206419 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ジョードプル	Jodhpur	0	26.2389469	73.0243094	1056191 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	スーラト	Surat	0	21.1702401	72.8310607	4501610 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ターネー	Thane	0	19.2183307	72.9780897	1841488 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ダンバード	Dhanbad	0	23.7956531	86.4303859	1162472 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	チェンナイ	Chennai	0	13.0826802	80.2707184	4646732 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ナーグプル	Nagpur	0	21.1458004	79.0881546	2405665 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ナーシク	Nashik	0	19.9974533	73.7898023	1486053 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ナビムンバイ	Navi Mumbai	0	19.0330488	73.0296625	1120547 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ハイデラーバード	Greater Hyderabad Municipal Corporation (GHMC)	0	17.385044	78.486671	6993262 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ハウラー	Howrah	0	22.5957689	88.2636394	1077075 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	バサイ	Vasai	0	19.3919275	72.8397317	1222390 	2011	DYB2017	ビラーを含む都市圏の人口（バサイ・ビラー）
+IN	インド	インド	India	India	パトナ	Patna	0	25.5940947	85.1375645	1684297 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	バンガロール	Bruhat Bengaluru Mahanagara Palike (BBMP)	0	12.9715987	77.5945627	8495492 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ピンプリ・チンチワッド	Pimpri-Chinchwad	0	18.6297811	73.7997094	1727692 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ファリーダーバード	Faridabad	0	28.4089123	77.3177894	1414050 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	プネー	Pune	0	18.5204303	73.8567437	3124458 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ボーパール	Bhopal	0	23.2599333	77.412615	1798218 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	マドゥライ	Madurai	0	9.9252007	78.1197754	1017865 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ムンバイ	Greater Mumbai	0	19.0759837	72.8776559	12442373 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	メーラト	Meerut	0	28.9844618	77.7064137	1305429 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ラーイプル	Raipur	0	21.2513844	81.6296413	1027264 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ラージコート	Rajkot	0	22.3038945	70.8021599	1323363 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ラーンチー	Ranchi	0	23.3440997	85.309562	1073427 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ラクナウ	Lucknow	0	26.8466937	80.946166	2817105 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ルディアーナー	Ludhiana	0	30.900965	75.8572758	1618879 	2011	DYB2017	都市圏の人口
+IN	インド	インド	India	India	ワーラーナシー	Varanasi	0	25.3176452	82.9739144	1198491 	2011	DYB2017	都市圏の人口
+ID	インドネシア共和国	インドネシア	Republic of Indonesia	Indonesia	ジャカルタ	Jakarta	1	-6.2087634	106.845599	10428001 	2018	DYB2018	
+ID	インドネシア共和国	インドネシア	Republic of Indonesia	Indonesia	スカブミ	Sukabumi	0	-6.9277361	106.9299579	1301873 	2018	DYB2018	新・百万都市
+ID	インドネシア共和国	インドネシア	Republic of Indonesia	Indonesia	スラバヤ	Surabaya	0	-7.2574719	112.7520883	2885245 	2018	DYB2018	
+ID	インドネシア共和国	インドネシア	Republic of Indonesia	Indonesia	タンゲラン	Tangerang	0	-6.2023936	106.6527099	3050758 	2018	DYB2018	
+ID	インドネシア共和国	インドネシア	Republic of Indonesia	Indonesia	チルボン	Cirebon	0	-6.7320229	108.5523164	1891957 	2018	DYB2018	新・百万都市
+ID	インドネシア共和国	インドネシア	Republic of Indonesia	Indonesia	バタム	Batam	0	1.1300779	104.0529207	1347762 	2018	DYB2018	
+ID	インドネシア共和国	インドネシア	Republic of Indonesia	Indonesia	パレンバン	Palembang	0	-2.9760735	104.7754307	1649298 	2018	DYB2018	
+ID	インドネシア共和国	インドネシア	Republic of Indonesia	Indonesia	バンダールランプン	Bandar Lampung	0	-5.3971396	105.2667887	1033601 	2018	DYB2018	
+ID	インドネシア共和国	インドネシア	Republic of Indonesia	Indonesia	バンドン	Bandung	0	-6.9174639	107.6191228	2525220 	2018	DYB2018	
+ID	インドネシア共和国	インドネシア	Republic of Indonesia	Indonesia	プカンバル	Pekanbaru	0	0.5070677	101.4477793	1090735 	2018	DYB2018	
+ID	インドネシア共和国	インドネシア	Republic of Indonesia	Indonesia	ボゴール	Bogor	0	-6.5971469	106.8060388	5162044 	2018	DYB2018	
+ID	インドネシア共和国	インドネシア	Republic of Indonesia	Indonesia	マカッサル	Makassar	0	-5.1476651	119.4327314	1502459 	2018	DYB2018	
+ID	インドネシア共和国	インドネシア	Republic of Indonesia	Indonesia	マラン	Malang	0	-7.9666204	112.6326321	1382786 	2018	DYB2018	新・百万都市
+ID	インドネシア共和国	インドネシア	Republic of Indonesia	Indonesia	メダン	Medan	0	3.5951956	98.6722227	2269588 	2018	DYB2018	
+UG	ウガンダ共和国	ウガンダ	Republic of Uganda	Uganda	カンパラ	Kampala	1	0.3475964	32.5825197	1507114 	2014	DYB2017	
+UA	ウクライナ	ウクライナ	Ukraine	Ukraine	キエフ	Kiev	1	50.4501	30.5234	2893215 	2018	DYB2018	
+UA	ウクライナ	ウクライナ	Ukraine	Ukraine	ハルキウ	Kharkiv	0	49.9935	36.230383	1430515 	2018	DYB2018	
+UZ	ウズベキスタン共和国	ウズベキスタン	Republic of Uzbekistan	Uzbekistan	タシケント	Tashkent	1	41.2994958	69.2400734	2464933 	2018	DYB2018	
+UY	ウルグアイ東方共和国	ウルグアイ	Oriental Republic of Uruguay	Uruguay	モンテビデオ	Montevideo	1	-34.9011127	-56.1645314	1381946 	2018	DYB2018	
+EC	エクアドル共和国	エクアドル	Republic of Ecuador	Ecuador	キト	Quito	1	-0.1806532	-78.4678382	1805522 	2018	DYB2018	
+EC	エクアドル共和国	エクアドル	Republic of Ecuador	Ecuador	グアヤキル	Guayaquil	0	-2.1709979	-79.9223592	2581884 	2018	DYB2018	
+EG	エジプト・アラブ共和国	エジプト	Arab Republic of Egypt	Egypt	カイロ	Cairo	1	30.0444196	31.2357116	9539673 	2017	DYB2017	都市圏の人口
+EG	エジプト・アラブ共和国	エジプト	Arab Republic of Egypt	Egypt	アレクサンドリア	Alexandria	0	31.2000924	29.9187387	5163750 	2017	DYB2017	都市圏の人口
+ET	エチオピア連邦民主共和国	エチオピア	Federal Democratic Republic of Ethiopia	Ethiopia	アディスアベバ	Addis Ababa	1	8.9806034	38.7577605	4215965 	2017	DYB2017	
+AU	オーストラリア連邦	オーストラリア	Commonwealth of Australia	Australia	アデレード	Adelaide	0	-34.9284989	138.6007456	1315522 	2017	DYB2018	都市圏の人口
+AU	オーストラリア連邦	オーストラリア	Commonwealth of Australia	Australia	シドニー	Sydney	0	-33.8688197	151.2092955	4741249 	2017	DYB2018	都市圏の人口
+AU	オーストラリア連邦	オーストラリア	Commonwealth of Australia	Australia	パース	Perth	0	-31.9505269	115.8604572	2000767 	2017	DYB2018	都市圏の人口
+AU	オーストラリア連邦	オーストラリア	Commonwealth of Australia	Australia	ブリスベーン	Brisbane	0	-27.4697707	153.0251235	2331913 	2017	DYB2018	都市圏の人口
+AU	オーストラリア連邦	オーストラリア	Commonwealth of Australia	Australia	メルボルン	Melbourne	0	-37.8136276	144.9630576	4670461 	2017	DYB2018	都市圏の人口
+AT	オーストリア共和国	オーストリア	Republic of Austria	Austria	ウィーン	Vienna	1	48.2081743	16.3738189	1888776 	2018	DYB2018	
+GH	ガーナ共和国	ガーナ	Republic of Ghana	Ghana	アクラ	Accra	1	5.6037168	-0.1869644	1594419 	2010	DYB2017	
+GH	ガーナ共和国	ガーナ	Republic of Ghana	Ghana	クマシ	Kumasi	0	6.6666004	-1.6162709	1730249 	2010	DYB2017	
+KZ	カザフスタン共和国	カザフスタン	Republic of Kazakhstan	Kazakhstan	アスタナ	Astana	1	51.1605227	71.4703558	1054481 	2018	DYB2018	
+KZ	カザフスタン共和国	カザフスタン	Republic of Kazakhstan	Kazakhstan	アルマトイ	Almaty	0	43.2220146	76.8512485	1828325 	2018	DYB2018	
+CA	カナダ	カナダ	Canada	Canada	オタワ	Ottawa	1	45.4215296	-75.6971931	1007501 	2018	DYB2018	新・百万都市
+CA	カナダ	カナダ	Canada	Canada	エドモントン	Edmonton	0	53.5461245	-113.4938229	1004947 	2018	DYB2018	新・百万都市
+CA	カナダ	カナダ	Canada	Canada	カルガリー	Calgary	0	51.0486151	-114.0708459	1311833 	2018	DYB2018	
+CA	カナダ	カナダ	Canada	Canada	トロント	Toronto	0	43.653226	-79.3831843	2956024 	2018	DYB2018	
+CA	カナダ	カナダ	Canada	Canada	モントリオール	Montreal	0	45.5016889	-73.567256	1784420 	2018	DYB2018	
+CM	カメルーン共和国	カメルーン	Republic of Cameroon	Cameroon	ヤウンデ	Yaounde	1	3.8480325	11.5020752	2873567 	2016	DYB2017	
+CM	カメルーン共和国	カメルーン	Republic of Cameroon	Cameroon	ドゥアラ	Duala	0	4.0510564	9.7678687	2948464 	2016	DYB2017	
+KR	大韓民国	韓国	Republic of Korea	South Korea	ソウル	Seoul	1	37.552361	126.991432	9776305 	2017	DYB2017	
+KR	大韓民国	韓国	Republic of Korea	South Korea	仁川（インチョン）	Incheon	0	37.4562557	126.7052062	2923047 	2017	DYB2017	
+KR	大韓民国	韓国	Republic of Korea	South Korea	蔚山（ウルサン）	Ulsan	0	35.546318	129.255797	1165646 	2017	DYB2017	
+KR	大韓民国	韓国	Republic of Korea	South Korea	光州（クァンジュ）	Gwangju	0	35.156192	126.835215	1500977 	2017	DYB2017	
+KR	大韓民国	韓国	Republic of Korea	South Korea	大邱（テグ）	Daegu	0	35.829768	128.565384	2465268 	2017	DYB2017	
+KR	大韓民国	韓国	Republic of Korea	South Korea	大田（テジョン）	Daejeon	0	36.339747	127.394132	1531256 	2017	DYB2017	
+KR	大韓民国	韓国	Republic of Korea	South Korea	釜山（プサン）	Busan	0	35.161167	129.047637	3428923 	2017	DYB2017	
+KH	カンボジア王国	カンボジア	Kingdom of Cambodia	Cambodia	プノンペン	Phnom Penh	1	11.5563738	104.9282099	1570791 	2011	DYB2017	
+KH	カンボジア王国	カンボジア	Kingdom of Cambodia	Cambodia	バッタンバン	Battambang	0	13.09573	103.2022055	1126345 	2011	DYB2017	
+KP	朝鮮民主主義人民共和国	北朝鮮	Democratic People's Republic of Korea	North Korea	ピョンヤン	Pyongyang	1	39.0392193	125.7625241	2581076 	2008	DYB2017	
+GN	ギニア共和国	ギニア	Republic of Guinea	Guinea	コナクリ	Conakry	1	9.6411855	-13.5784012	1659785 	2014	DYB2017	
+CU	キューバ共和国	キューバ	Republic of Cuba	Cuba	ハバナ	Havana	1	23.1135925	-82.3665956	2130517 	2018	DYB2018	
+KE	ケニア共和国	ケニア	Republic of Kenya	Kenya	ナイロビ	Nairobi	1	-1.2920659	36.8219462	3109861 	2010	DYB2017	
+CI	コートジボワール共和国	コートジボワール	Republic of Côte d'Ivoire	Ivory Coast	アビジャン	Abidjan	0	5.3599517	-4.0082563	4395243 	2014	DYB2017	
+CO	コロンビア共和国	コロンビア	Republic of Colombia	Colombia	ボゴタ	Bogota	1	4.7109886	-74.072092	8181047 	2018	DYB2018	
+CO	コロンビア共和国	コロンビア	Republic of Colombia	Colombia	カリ	Cali	0	3.4516467	-76.5319854	2445405 	2018	DYB2018	
+CO	コロンビア共和国	コロンビア	Republic of Colombia	Colombia	カルタヘナ	Cartagena	0	10.3910485	-75.4794257	1036134 	2018	DYB2018	
+CO	コロンビア共和国	コロンビア	Republic of Colombia	Colombia	バランキージャ	Barranquilla	0	11.0041072	-74.8069813	1232462 	2018	DYB2018	
+CO	コロンビア共和国	コロンビア	Republic of Colombia	Colombia	メデリン	Medellin	0	6.253657	-75.563778	2529403 	2018	DYB2018	
+CD	コンゴ民主共和国	コンゴ民主共和国	Democratic Republic of the Congo	Congo, DR	キンシャサ	Kinshasa	1	-4.4419311	15.2662931	2664309 	1984	DYB2004	
+SA	サウジアラビア王国	サウジアラビア	Kingdom of Saudi Arabia	Saudi Arabia	リヤド	Riyadh	1	24.7135517	46.6752957	5188286 	2010	DYB2017	
+SA	サウジアラビア王国	サウジアラビア	Kingdom of Saudi Arabia	Saudi Arabia	アルマディーナ	Al-Madinah	0	24.5246542	39.5691841	1100093 	2010	DYB2017	
+SA	サウジアラビア王国	サウジアラビア	Kingdom of Saudi Arabia	Saudi Arabia	ジッダ	Jeddah	0	21.485811	39.1925048	3430697 	2010	DYB2017	
+SA	サウジアラビア王国	サウジアラビア	Kingdom of Saudi Arabia	Saudi Arabia	メッカ	Makkah	0	21.3890824	39.8579118	1534731 	2010	DYB2017	
+ZM	ザンビア共和国	ザンビア	Republic of Zambia	Zambia	ルサカ	Lusaka	1	-15.3875259	28.3228165	1747152 	2010	DYB2017	
+SL	シエラレオネ共和国	シエラレオネ	Republic of Sierra Leone	Sierra Leone	フリータウン	Freetown	1	8.4656765	-13.2317225	1055964 	2015	DYB2017	
+GE	ジョージア	ジョージア	Georgia	Georgia	トビリシ	Tbilisi	1	41.7151377	44.827096	1113800 	2016	DYB2017	
+SY	シリア・アラブ共和国	シリア	Syrian Arab Republic	Syria	ダマスカス	Damascus	1	33.5138073	36.2765279	1680000 	2008	DYB2017	
+SY	シリア・アラブ共和国	シリア	Syrian Arab Republic	Syria	アレッポ	Aleppo	0	36.2021047	37.1342603	4450000 	2008	DYB2017	
+SY	シリア・アラブ共和国	シリア	Syrian Arab Republic	Syria	イドリブ	Idlib	0	35.9310271	36.6417777	1376000 	2008	DYB2017	
+SY	シリア・アラブ共和国	シリア	Syrian Arab Republic	Syria	ダマスカス郊外	Rural Damascus	0	33.5138073	36.2765279	2529000 	2008	DYB2017	代表点はダマスカス
+SY	シリア・アラブ共和国	シリア	Syrian Arab Republic	Syria	デリゾール	Deir ez-Zor	0	35.3296518	40.1350341	1111000 	2008	DYB2017	
+SY	シリア・アラブ共和国	シリア	Syrian Arab Republic	Syria	ハサカ	Al-Hasakah	0	36.507867	40.7462671	1392000 	2008	DYB2017	
+SY	シリア・アラブ共和国	シリア	Syrian Arab Republic	Syria	ハマー	Hama	0	35.1408881	36.7551993	1508000 	2008	DYB2017	
+SY	シリア・アラブ共和国	シリア	Syrian Arab Republic	Syria	ホムス	Homs	0	34.7324273	36.7136959	1667000 	2008	DYB2017	
+SG	シンガポール共和国	シンガポール	Republic of Singapore	Singapore	シンガポール	Singapore	1	1.355429	103.867722	5638676 	2018	DYB2018	
+ZW	ジンバブエ共和国	ジンバブエ	Republic of Zimbabwe	Zimbabwe	ハラレ	Harare	1	-17.8251657	31.03351	1485231 	2012	DYB2017	
+SD	スーダン共和国	スーダン	The Republic of the Sudan	Sudan	オムドゥルマン	Omdurman	0	15.6475782	32.4806894	1271403 	1993	DYB2009-2010	
+ES	スペイン	スペイン	Spain	Spain	マドリード	Madrid	1	40.4167754	-3.7037902	3203157 	2017	DYB2018	
+ES	スペイン	スペイン	Spain	Spain	バルセロナ	Barcelona	0	41.3850639	2.1734035	1620576 	2017	DYB2018	
+SN	セネガル共和国	セネガル	Republic of Senegal	Senegal	ダカール	Dakar	1	14.716677	-17.4676861	1056009 	2011	DYB2017	
+RS	セルビア共和国	セルビア	Republic of Serbia	Serbia	ベオグラード	Belgrade	1	44.786568	20.4489216	1378682 	2017	DYB2018	
+SO	ソマリア連邦共和国	ソマリア	Federal Republic of Somalia	Somalia	モガディシオ	Mogadishu	1	2.0469343	45.3181623	1212000 	2001	DYB2017	
+TH	タイ王国	タイ	Kingdom of Thailand	Thailand	バンコク	Bangkok	1	13.7563309	100.5017651	8305218 	2010	DYB2017	都市圏の人口
+TH	タイ王国	タイ	Kingdom of Thailand	Thailand	サムットプラカーン	Samut Prakan	0	13.5990961	100.5998319	1082993 	2010	DYB2017	都市圏の人口
+TH	タイ王国	タイ	Kingdom of Thailand	Thailand	チョンブリー	Chon Buri	0	13.3611431	100.9846717	1158989 	2010	DYB2017	都市圏の人口
+TW	台湾（中華民国）	台湾	Taiwan, Province of China (Republic of China)	Taiwan	台北（タイペイ）	Taipei	1	25.0329694	121.5654177	2668572 	2018	TW2018	
+TW	台湾（中華民国）	台湾	Taiwan, Province of China (Republic of China)	Taiwan	高雄（カオシュン）	Kaohsiung	0	22.6272784	120.3014353	2773533 	2018	TW2018	
+TW	台湾（中華民国）	台湾	Taiwan, Province of China (Republic of China)	Taiwan	新北（シンペイ）	New Taipei	0	25.0169826	121.4627868	3995717 	2018	TW2018	
+TW	台湾（中華民国）	台湾	Taiwan, Province of China (Republic of China)	Taiwan	台中（タイチョン）	Taichung	0	24.1477358	120.6736482	2803894 	2018	TW2018	
+TW	台湾（中華民国）	台湾	Taiwan, Province of China (Republic of China)	Taiwan	台南（タイナン）	Tainan	0	22.9997281	120.2270277	1883831 	2018	TW2018	
+TW	台湾（中華民国）	台湾	Taiwan, Province of China (Republic of China)	Taiwan	桃園（タオユェン）	Taoyuan	0	24.9936281	121.3009798	2220872 	2018	TW2018	
+TW	台湾（中華民国）	台湾	Taiwan, Province of China (Republic of China)	Taiwan	彰化（チャンホワ）	Changhua	0	24.0517963	120.5161352	1277824 	2018	TW2018	
+TZ	タンザニア連合共和国	タンザニア	United Republic of Tanzania	Tanzania	アルーシャ	Arusha	0	-3.3869254	36.6829927	1000923 	2018	DYB2018	新・百万都市
+TZ	タンザニア連合共和国	タンザニア	United Republic of Tanzania	Tanzania	ザンジバル	Zanzibar	0	-6.165917	39.202641	1303569 	2012	DYB2017	正解はウングジャ島域
+TZ	タンザニア連合共和国	タンザニア	United Republic of Tanzania	Tanzania	ダルエスサラーム	Dar es Salaam	0	-6.792354	39.2083284	5147070 	2018	DYB2018	
+TZ	タンザニア連合共和国	タンザニア	United Republic of Tanzania	Tanzania	ムワンザ	Mwanza	0	-2.5164305	32.9174517	2772509 	2012	DYB2017	
+CZ	チェコ共和国	チェコ	Czech Republic	Czech Republic	プラハ	Prague	1	50.0755381	14.4378005	1294513 	2018	DYB2018	
+CN	中華人民共和国	中国	People's Republic of China	China	北京（ペキン）	Beijing	1	39.9041999	116.4073963	18796000 	2016	DYB2017	都市圏の人口
+CN	中華人民共和国	中国	People's Republic of China	China	鞍山（アンシャン）	Anshan	0	41.108647	122.994329	1556285 	2000	DYB2009-2010	遼寧省鞍山市
+CN	中華人民共和国	中国	People's Republic of China	China	安丘（アンチュウ）	Anqiu	0	36.478493	119.218978	1096782 	2000	DYB2009-2010	山東省イ坊市安丘市
+CN	中華人民共和国	中国	People's Republic of China	China	宜興（イーシン）	Yixing	0	31.340637	119.823308	1164275 	2000	DYB2009-2010	江蘇省無錫市宜興市
+CN	中華人民共和国	中国	People's Republic of China	China	益陽（イーヤン）	Yiyang	0	28.55386	112.35518	1228881 	2000	DYB2009-2010	湖南省益陽市
+CN	中華人民共和国	中国	People's Republic of China	China	煙台（イェンタイ）	Yantai	0	37.464539	121.447852	1724404 	2000	DYB2009-2010	山東省煙台市
+CN	中華人民共和国	中国	People's Republic of China	China	無錫（ウーシー）	Wuxi	0	31.491169	120.31191	1425766 	2000	DYB2009-2010	江蘇省無錫市
+CN	中華人民共和国	中国	People's Republic of China	China	武進（ウージン）	Wujin	0	31.701187	119.942437	1420204 	2000	DYB2009-2010	江蘇省常州市武進区
+CN	中華人民共和国	中国	People's Republic of China	China	武漢（ウーハン）	Wuhan	0	30.592849	114.305539	8312700 	2000	DYB2009-2010	湖北省武漢市
+CN	中華人民共和国	中国	People's Republic of China	China	濰坊（ウェイファン）	Weifang	0	36.706962	119.161748	1380300 	2000	DYB2009-2010	山東省イ坊市
+CN	中華人民共和国	中国	People's Republic of China	China	温州（ウェンヂョウ）	Wenzhou	0	27.993828	120.699361	1915548 	2000	DYB2009-2010	浙江省温州市
+CN	中華人民共和国	中国	People's Republic of China	China	温嶺（ウェンリン）	Wenling	0	28.372506	121.385604	1162783 	2000	DYB2009-2010	浙江省台州市温嶺市
+CN	中華人民共和国	中国	People's Republic of China	China	烏魯木斉（ウルムチ）	Urumqi	0	43.825592	87.616848	1753298 	2000	DYB2009-2010	新疆ウイグルウルムチ
+CN	中華人民共和国	中国	People's Republic of China	China	鄂州（オゥーヂョウ）	Ezhou	0	30.39194	114.894843	1023285 	2000	DYB2009-2010	湖北省鄂州市
+CN	中華人民共和国	中国	People's Republic of China	China	高州（カオチョウ）	Gaozhou	0	21.918203	110.853299	1219132 	2000	DYB2009-2010	広東省茂名市高州市
+CN	中華人民共和国	中国	People's Republic of China	China	広安（グァンアン）	Guangan	0	30.456224	106.633088	1093103 	2000	DYB2009-2010	四川省広安市
+CN	中華人民共和国	中国	People's Republic of China	China	広州（グアンヂョウ）	Guangzhou	0	23.12911	113.264385	8524826 	2000	DYB2009-2010	広東省広州市
+CN	中華人民共和国	中国	People's Republic of China	China	桂平（グイピン）	Guiping	0	23.394325	110.079379	1359035 	2000	DYB2009-2010	広西チワン族自治区貴港市桂平市
+CN	中華人民共和国	中国	People's Republic of China	China	貴港（グエガン）	Guigang	0	23.11153	109.598926	1413128 	2000	DYB2009-2010	広西チワン族自治区貴港市
+CN	中華人民共和国	中国	People's Republic of China	China	昆明（クンミン）	Kunming	0	24.880095	102.832891	3035406 	2000	DYB2009-2010	雲南省昆明市
+CN	中華人民共和国	中国	People's Republic of China	China	貴陽（コイヤン）	Guiyang	0	26.647661	106.630153	2985105 	2000	DYB2009-2010	貴州省貴陽市
+CN	中華人民共和国	中国	People's Republic of China	China	公主嶺（ゴンヂューリン）	Gongzhuling	0	43.504687	124.82283	1041735 	2000	DYB2009-2010	吉林省四平市公主嶺市
+CN	中華人民共和国	中国	People's Republic of China	China	棗荘（ザオヂュアン）	Zaozhuang	0	34.810487	117.323725	1996798 	2000	DYB2009-2010	山東省棗荘市
+CN	中華人民共和国	中国	People's Republic of China	China	棗陽（ザオヤン）	Zaoyang	0	32.128818	112.771959	1054374 	2000	DYB2009-2010	湖北省襄陽市棗陽市
+CN	中華人民共和国	中国	People's Republic of China	China	江陰（ジァンイン）	Jiangyin	0	31.920658	120.284938	1315472 	2000	DYB2009-2010	江蘇省無錫市江陰市
+CN	中華人民共和国	中国	People's Republic of China	China	江都（ジァンドゥー）	Jiangdu	0	32.434672	119.569989	1053023 	2000	DYB2009-2010	江蘇省揚州市江都区
+CN	中華人民共和国	中国	People's Republic of China	China	西安（シーアン）	Xi'an	0	34.341574	108.93977	4481508 	2000	DYB2009-2010	陝西省西安市
+CN	中華人民共和国	中国	People's Republic of China	China	石家荘（シージャーズォアン）	Shijiazhuang	0	38.042805	114.514893	1969975 	2000	DYB2009-2010	河北省石家荘市
+CN	中華人民共和国	中国	People's Republic of China	China	西山（シーシャン）	Xishan	0	25.038296	102.664376	1181073 	2000	DYB2009-2010	雲南省昆明市西山区
+CN	中華人民共和国	中国	People's Republic of China	China	済南（ジーナン）	Jinan	0	36.6512	117.120095	2999934 	2000	DYB2009-2010	山東省済南市
+CN	中華人民共和国	中国	People's Republic of China	China	済寧（ジーニン）	Jining (Shandong)	0	35.414982	116.587282	1050522 	2000	DYB2009-2010	山東省済寧市
+CN	中華人民共和国	中国	People's Republic of China	China	即墨（ジーモー）	Jimo	0	36.389401	120.44716	1111202 	2000	DYB2009-2010	山東省青島市即墨市
+CN	中華人民共和国	中国	People's Republic of China	China	仙桃（シェンタオ）	Xiantao	0	30.360882	113.423482	1474078 	2000	DYB2009-2010	湖北省仙桃市
+CN	中華人民共和国	中国	People's Republic of China	China	深圳（シェンヂェン）	Shenzhen	0	22.543096	114.057865	7008831 	2000	DYB2009-2010	広東省深セン
+CN	中華人民共和国	中国	People's Republic of China	China	瀋陽（シェンヤン）	Shenyang	0	41.805699	123.431472	5303053 	2000	DYB2009-2010	遼寧省瀋陽市
+CN	中華人民共和国	中国	People's Republic of China	China	簡陽（ジェンヤン）	Jianyang (Sichuan)	0	30.411264	104.54722	1412523 	2000	DYB2009-2010	四川省資陽市簡陽市
+CN	中華人民共和国	中国	People's Republic of China	China	廈門（シャーメン）	Xiamen	0	24.479833	118.089425	2053070 	2000	DYB2009-2010	福建省廈門市
+CN	中華人民共和国	中国	People's Republic of China	China	蕭山（シャオシャン）	Xiaoshan	0	30.183806	120.264253	1233348 	2000	DYB2009-2010	浙江省杭州市蕭山区
+CN	中華人民共和国	中国	People's Republic of China	China	江津（ジャンジン）	Jiangjin	0	29.290069	106.259281	1322890 	2000	DYB2009-2010	重慶市江津区
+CN	中華人民共和国	中国	People's Republic of China	China	商丘（シャンチュウ）	Shangqiu	0	34.414961	115.656339	1428983 	2000	DYB2009-2010	河南省商丘市
+CN	中華人民共和国	中国	People's Republic of China	China	項城（シャンチョン）	Xiangcheng	0	33.465838	114.875333	1052468 	2000	DYB2009-2010	河南省周口市項城市
+CN	中華人民共和国	中国	People's Republic of China	China	汕頭（シャントウ）	Shantou	0	23.354091	116.681972	1270112 	2000	DYB2009-2010	広東省汕頭市
+CN	中華人民共和国	中国	People's Republic of China	China	上海（シャンハイ）	Shanghai	0	31.2303904	121.4737021	14348535 	2000	DYB2009-2010	上海市
+CN	中華人民共和国	中国	People's Republic of China	China	徐州（シューィヂョウ）	Xuzhou	0	34.205768	117.284124	1679626 	2000	DYB2009-2010	江蘇省徐州市
+CN	中華人民共和国	中国	People's Republic of China	China	宣威（シュエンウェイ）	Xuanwei	0	26.219766	104.104475	1292825 	2000	DYB2009-2010	雲南省曲靖市宣威市
+CN	中華人民共和国	中国	People's Republic of China	China	順徳（シュンダー）	Shunde	0	22.80524	113.293359	1694152 	2000	DYB2009-2010	広東省仏山市順徳区
+CN	中華人民共和国	中国	People's Republic of China	China	寿光（ショウグァン）	Shouguang	0	36.85576	118.790739	1081991 	2000	DYB2009-2010	山東省イ坊市寿光市
+CN	中華人民共和国	中国	People's Republic of China	China	諸城（ショジョウ）	Zhucheng	0	35.995654	119.410103	1053695 	2000	DYB2009-2010	山東省イ坊市諸城市
+CN	中華人民共和国	中国	People's Republic of China	China	晋江（ジンジアン）	Jinjiang	0	24.781681	118.552365	1479259 	2000	DYB2009-2010	福建省泉州市晋江市
+CN	中華人民共和国	中国	People's Republic of China	China	新泰（シンタイ）	Xintai	0	35.909032	117.767952	1344395 	2000	DYB2009-2010	山東省泰安市新泰市
+CN	中華人民共和国	中国	People's Republic of China	China	荊州（ジンヂョウ）	Jingzhou	0	30.335237	112.239631	1177150 	2000	DYB2009-2010	湖北省荊州区
+CN	中華人民共和国	中国	People's Republic of China	China	興化（シンフア）	Xinghua	0	32.910459	119.85254	1441659 	2000	DYB2009-2010	江蘇省泰州市興化市
+CN	中華人民共和国	中国	People's Republic of China	China	信陽（シンヤン）	Xinyang	0	32.147679	114.091192	1255750 	2000	DYB2009-2010	河南省信陽市
+CN	中華人民共和国	中国	People's Republic of China	China	随州（スイヂョウ）	Suizhou	0	31.690215	113.382458	1598752 	2000	DYB2009-2010	湖北省随州市
+CN	中華人民共和国	中国	People's Republic of China	China	遂寧（スイニン）	Suining	0	30.532847	105.592898	1355388 	2000	DYB2009-2010	四川省遂寧市
+CN	中華人民共和国	中国	People's Republic of China	China	宿州（スーヂョウ）	Suzhou (Anhui)	0	33.646357	116.964358	1601181 	2000	DYB2009-2010	安徽省宿州市
+CN	中華人民共和国	中国	People's Republic of China	China	蘇州（スーヂョウ）	Suzhou (Jiangsu)	0	31.298974	120.585289	1344709 	2000	DYB2009-2010	江蘇省蘇州市
+CN	中華人民共和国	中国	People's Republic of China	China	淄博（ズーボー）	Zibo	0	36.813546	118.055019	2817479 	2000	DYB2009-2010	山東省シ博市
+CN	中華人民共和国	中国	People's Republic of China	China	資陽（ズーヤン）	Ziyang	0	30.128901	104.627636	1016034 	2000	DYB2009-2010	四川省資陽市
+CN	中華人民共和国	中国	People's Republic of China	China	鄭州（ズェンヂョウ）	Zhengzhou	0	34.746611	113.625328	2589387 	2000	DYB2009-2010	河南省鄭州市
+CN	中華人民共和国	中国	People's Republic of China	China	鄒城（ズォウチョン）	Zoucheng	0	35.405184	117.003743	1101003 	2000	DYB2009-2010	山東省済寧市鄒城市
+CN	中華人民共和国	中国	People's Republic of China	China	中山（ズォンシャン）	Zhongshan	0	22.517585	113.39277	2363322 	2000	DYB2009-2010	広東省中山市
+CN	中華人民共和国	中国	People's Republic of China	China	大慶（ダーチン）	Daqing	0	46.589309	125.103784	1380051 	2000	DYB2009-2010	黒竜江省大慶市
+CN	中華人民共和国	中国	People's Republic of China	China	大同（ダートン）	Datong	0	40.076762	113.300129	1526744 	2000	DYB2009-2010	山西省大同市
+CN	中華人民共和国	中国	People's Republic of China	China	大連（ダーリエン）	Dalian	0	38.914003	121.614682	3245191 	2000	DYB2009-2010	遼寧省大連市
+CN	中華人民共和国	中国	People's Republic of China	China	泰安（タイアン）	Tai'an	0	36.200252	117.087614	1538211 	2000	DYB2009-2010	山東省泰安市
+CN	中華人民共和国	中国	People's Republic of China	China	泰興（タイシン）	Taixing	0	32.171853	120.051743	1235454 	2000	DYB2009-2010	江蘇省泰州市泰興市
+CN	中華人民共和国	中国	People's Republic of China	China	台州（タイヂョウ）	Taizhou (Zhejiang)	0	28.65638	121.42076	1491963 	2000	DYB2009-2010	浙江省台州市
+CN	中華人民共和国	中国	People's Republic of China	China	太原（タイユアン）	Taiyuan	0	37.87059	112.548879	2558382 	2000	DYB2009-2010	山西省太原市
+CN	中華人民共和国	中国	People's Republic of China	China	唐山（タンシャン）	Tangshan	0	39.630867	118.180193	1711311 	2000	DYB2009-2010	河北省唐山市
+CN	中華人民共和国	中国	People's Republic of China	China	啓東（チードン）	Qidong	0	31.793278	121.655432	1057073 	2000	DYB2009-2010	江蘇省南通市啓東市
+CN	中華人民共和国	中国	People's Republic of China	China	赤峰（チーフォン）	Chifeng	0	42.25785	118.886931	1153723 	2000	DYB2009-2010	内モンゴル赤峰市
+CN	中華人民共和国	中国	People's Republic of China	China	吉林（ヂーリン）	Jilin	0	43.837883	126.549572	1953134 	2000	DYB2009-2010	吉林省吉林市
+CN	中華人民共和国	中国	People's Republic of China	China	斉斉哈爾（チチハル）	Qiqihar	0	47.354348	123.918186	1540089 	2000	DYB2009-2010	黒竜江省チチハル
+CN	中華人民共和国	中国	People's Republic of China	China	潮陽（チャオヤン）	Chaoyang (Guangdong)	0	23.264936	116.601515	2470812 	2000	DYB2009-2010	広東省汕頭市潮陽区
+CN	中華人民共和国	中国	People's Republic of China	China	湛江（チャンジァン）	Zhanjiang	0	21.270702	110.359368	1350665 	2000	DYB2009-2010	広東省湛江市
+CN	中華人民共和国	中国	People's Republic of China	China	長沙（チャンシャー）	Changsha	0	28.228209	112.938814	2122873 	2000	DYB2009-2010	湖南省長沙市
+CN	中華人民共和国	中国	People's Republic of China	China	常熟（チャンスゥオー）	Changshu	0	31.654375	120.752481	1239637 	2000	DYB2009-2010	江蘇省蘇州市常熟市
+CN	中華人民共和国	中国	People's Republic of China	China	常徳（チャンダー）	Changde	0	29.031654	111.698784	1346739 	2000	DYB2009-2010	湖南省常徳市
+CN	中華人民共和国	中国	People's Republic of China	China	長春（チャンチュン）	Changchun	0	43.817071	125.323544	3225557 	2000	DYB2009-2010	吉林省長春市
+CN	中華人民共和国	中国	People's Republic of China	China	常州（チャンヂョウ）	Changzhou	0	31.811226	119.974061	1081845 	2000	DYB2009-2010	江蘇省常州市
+CN	中華人民共和国	中国	People's Republic of China	China	諸曁（ヂュージー）	Zhuji	0	29.708692	120.246863	1070675 	2000	DYB2009-2010	浙江省紹興市諸曁市
+CN	中華人民共和国	中国	People's Republic of China	China	泉州（チュワンヂョウ）	Quanzhou	0	24.874132	118.675675	1192286 	2000	DYB2009-2010	福建省泉州市
+CN	中華人民共和国	中国	People's Republic of China	China	鍾祥（ヂョンシャン）	Zhongxiang	0	31.16782	112.58812	1021998 	2000	DYB2009-2010	湖北省荊門市鍾祥市
+CN	中華人民共和国	中国	People's Republic of China	China	欽州（チンジョウ）	Qinzhou	0	21.979933	108.654146	1035504 	2000	DYB2009-2010	広西チワン族自治区欽州市
+CN	中華人民共和国	中国	People's Republic of China	China	青島（チンダオ）	Qingdao	0	36.067108	120.382609	2720972 	2000	DYB2009-2010	山東省青島市
+CN	中華人民共和国	中国	People's Republic of China	China	自貢（ツーゴン）	Zigong	0	29.33903	104.778442	1051384 	2000	DYB2009-2010	四川省自貢市
+CN	中華人民共和国	中国	People's Republic of China	China	慈渓（ツーシー）	Cixi	0	30.169665	121.266579	1214537 	2000	DYB2009-2010	浙江省寧波市慈渓市
+CN	中華人民共和国	中国	People's Republic of China	China	成都（ツェンドゥー）	Chengdu	0	30.572815	104.066801	4333541 	2000	DYB2009-2010	四川省成都市
+CN	中華人民共和国	中国	People's Republic of China	China	重慶（ツォンチン）	Chongqing	0	29.4315861	106.912251	9691901 	2000	DYB2009-2010	重慶市
+CN	中華人民共和国	中国	People's Republic of China	China	天水（ティエンシュイ）	Tianshui	0	34.580885	105.72498	1146986 	2000	DYB2009-2010	甘粛省天水市
+CN	中華人民共和国	中国	People's Republic of China	China	天津（ティエンジン）	Tianjin	0	39.3433574	117.3616476	7499181 	2000	DYB2009-2010	天津市
+CN	中華人民共和国	中国	People's Republic of China	China	天門（ティエンメン）	Tianmen	0	30.653061	113.165862	1613739 	2000	DYB2009-2010	湖北省天門市
+CN	中華人民共和国	中国	People's Republic of China	China	定州（ティンチョウ）	Dingzhou	0	38.516461	114.990392	1107903 	2000	DYB2009-2010	河北省保定市定州市
+CN	中華人民共和国	中国	People's Republic of China	China	鄧州（テンチョウ）	Dengzhou	0	32.687733	112.087455	1290656 	2000	DYB2009-2010	河南省南陽市トウ州市
+CN	中華人民共和国	中国	People's Republic of China	China	東莞（ドングアン）	Dongguan	0	23.020673	113.751799	6445777 	2000	DYB2009-2010	広東省東莞市
+CN	中華人民共和国	中国	People's Republic of China	China	東台（ドンタイ）	Dongtai	0	32.868426	120.320328	1164653 	2000	DYB2009-2010	江蘇省塩城市東台市
+CN	中華人民共和国	中国	People's Republic of China	China	滕州（トンヂョウ）	Tengzhou	0	35.084021	117.164388	1548817 	2000	DYB2009-2010	山東省棗荘市滕州市
+CN	中華人民共和国	中国	People's Republic of China	China	通州（トンヂョウ）	Tongzhou	0	32.06568	121.073828	1371498 	2000	DYB2009-2010	江蘇省南通市通州区
+CN	中華人民共和国	中国	People's Republic of China	China	南安（ナンアン）	Nan'an	0	24.960385	118.386279	1385276 	2000	DYB2009-2010	福建省泉州市南安市
+CN	中華人民共和国	中国	People's Republic of China	China	南京（ナンジン）	Nanjing	0	32.060255	118.796877	3624234 	2000	DYB2009-2010	江蘇省南京市
+CN	中華人民共和国	中国	People's Republic of China	China	南昌（ナンチャン）	Nanchang	0	28.682892	115.858197	1844253 	2000	DYB2009-2010	江西省南昌市
+CN	中華人民共和国	中国	People's Republic of China	China	南充（ナンチョン）	Nanchong	0	30.837793	106.110698	1771920 	2000	DYB2009-2010	四川省南充市
+CN	中華人民共和国	中国	People's Republic of China	China	南寧（ナンニン）	Nan'ning	0	22.817002	108.366543	1766701 	2000	DYB2009-2010	広西チワン族自治区南寧市
+CN	中華人民共和国	中国	People's Republic of China	China	南海（ナンハイ）	Nanhai	0	23.028956	113.143441	2133741 	2000	DYB2009-2010	広東省仏山市南海区
+CN	中華人民共和国	中国	People's Republic of China	China	南陽（ナンヤン）	Nan'yang	0	32.990664	112.528308	1584715 	2000	DYB2009-2010	河南省南陽市
+CN	中華人民共和国	中国	People's Republic of China	China	寧波（ニンポー）	Ningbo	0	29.868336	121.54399	1567499 	2000	DYB2009-2010	浙江省寧波市
+CN	中華人民共和国	中国	People's Republic of China	China	内江（ネイジャン）	Neijiang	0	29.580228	105.058433	1391931 	2000	DYB2009-2010	四川省内江市
+CN	中華人民共和国	中国	People's Republic of China	China	哈爾浜（ハーアルピン）	Harbin	0	45.803775	126.534967	3481504 	2000	DYB2009-2010	黒竜江省ハルビン
+CN	中華人民共和国	中国	People's Republic of China	China	巴中（バーヂョン）	Bazhong	0	31.867903	106.747477	1185862 	2000	DYB2009-2010	四川省巴中市
+CN	中華人民共和国	中国	People's Republic of China	China	合肥（ハーフェイ）	Hefei	0	31.820591	117.227219	1659075 	2000	DYB2009-2010	安徽省合肥市
+CN	中華人民共和国	中国	People's Republic of China	China	海城（ハイチョン）	Haicheng	0	40.882377	122.685217	1181130 	2000	DYB2009-2010	遼寧省鞍山市海城市
+CN	中華人民共和国	中国	People's Republic of China	China	包頭（パオトウ）	Baotou	0	40.657978	109.840313	1671181 	2000	DYB2009-2010	内モンゴル包頭市
+CN	中華人民共和国	中国	People's Republic of China	China	邯鄲（ハンダン）	Handan	0	36.625656	114.538961	1329734 	2000	DYB2009-2010	河北省邯鄲市
+CN	中華人民共和国	中国	People's Republic of China	China	漢川（ハンチュアン）	Hanchuan	0	30.661243	113.839149	1057396 	2000	DYB2009-2010	湖北省孝感市漢川市
+CN	中華人民共和国	中国	People's Republic of China	China	杭州（ハンヂョウ）	Hangzhou	0	30.274084	120.15507	2451319 	2000	DYB2009-2010	浙江省杭州市
+CN	中華人民共和国	中国	People's Republic of China	China	畢節（ビージェー）	Bijie	0	27.283955	105.291643	1128230 	2000	DYB2009-2010	貴州省畢節市
+CN	中華人民共和国	中国	People's Republic of China	China	邳州（ピーヂョウ）	Pizhou	0	34.338888	118.012531	1539922 	2000	DYB2009-2010	江蘇省徐州市ヒ州市
+CN	中華人民共和国	中国	People's Republic of China	China	平度（ピンドゥ）	Pingdu	0	36.776357	119.98842	1321975 	2000	DYB2009-2010	山東省青島市平度市
+CN	中華人民共和国	中国	People's Republic of China	China	淮南（ファイナン）	Huainan	0	32.625478	116.999932	1357228 	2000	DYB2009-2010	安徽省淮南市
+CN	中華人民共和国	中国	People's Republic of China	China	撫順（フーシュン）	Fushun	0	41.880872	123.957208	1434447 	2000	DYB2009-2010	遼寧省撫順市
+CN	中華人民共和国	中国	People's Republic of China	China	福州（フーヂョウ）	Fuzhou (Fujian)	0	26.074478	119.296482	2124435 	2000	DYB2009-2010	福建省福州市
+CN	中華人民共和国	中国	People's Republic of China	China	湖州（フーヂョウ）	Huzhou	0	30.89441	120.086809	1145414 	2000	DYB2009-2010	浙江省湖州市
+CN	中華人民共和国	中国	People's Republic of China	China	撫州（フーヂョウ）	Fuzhou (Jiangxi)	0	27.949217	116.358181	1007391 	2000	DYB2009-2010	江西省撫州市
+CN	中華人民共和国	中国	People's Republic of China	China	福清（フーチン）	Fuqing	0	25.721143	119.384334	1174540 	2000	DYB2009-2010	福建省福州市福清市
+CN	中華人民共和国	中国	People's Republic of China	China	普寧（プーニン）	Puning	0	23.297493	116.165777	1856402 	2000	DYB2009-2010	広東省掲陽市普寧市
+CN	中華人民共和国	中国	People's Republic of China	China	富陽（フーヤン）	Fuyang (Zhejiang)	0	30.048692	119.960076	1719057 	2000	DYB2009-2010	浙江省杭州市富陽市
+CN	中華人民共和国	中国	People's Republic of China	China	豊城（フォンチョン）	Fengcheng (Jiangxi)	0	28.159141	115.771093	1216412 	2000	DYB2009-2010	江西省宜春市豊城市
+CN	中華人民共和国	中国	People's Republic of China	China	呼和浩特（フフホト）	Huhehaote	0	40.842356	111.749995	1406955 	2000	DYB2009-2010	内モンゴルフフホト
+CN	中華人民共和国	中国	People's Republic of China	China	北流（ベイリュウ）	Beiliu	0	22.708311	110.354214	1049035 	2000	DYB2009-2010	広西チワン族自治区玉林市北流市
+CN	中華人民共和国	中国	People's Republic of China	China	淮安（ホァイアン）	Huai'an	0	33.551052	119.113185	1200679 	2000	DYB2009-2010	江蘇省淮安市
+CN	中華人民共和国	中国	People's Republic of China	China	化州（ホアチョウ）	Huazhou	0	21.664044	110.639569	1007796 	2000	DYB2009-2010	広東省茂名市化州市
+CN	中華人民共和国	中国	People's Republic of China	China	合川（ホーチュアン）	Hechuan	0	29.972084	106.27613	1420520 	2000	DYB2009-2010	重慶市合川区
+CN	中華人民共和国	中国	People's Republic of China	China	亳州（ボーヂョウ）	Bozhou	0	33.844582	115.778676	1351939 	2000	DYB2009-2010	安徽省亳州市
+CN	中華人民共和国	中国	People's Republic of China	China	菏沢（ホーヅー）	Heze	0	35.23375	115.480656	1280031 	2000	DYB2009-2010	山東省カ沢市
+CN	中華人民共和国	中国	People's Republic of China	China	香港（ホンコン）	Hong Kong	0	22.318933	114.169922	7451000 	2018	DYB2018	
+CN	中華人民共和国	中国	People's Republic of China	China	麻城（マーチョン）	Macheng	0	31.172739	115.008163	1129047 	2000	DYB2009-2010	湖北省黄岡市麻城市
+CN	中華人民共和国	中国	People's Republic of China	China	綿陽（ミエンヤン）	Mianyang	0	31.46746	104.679004	1162962 	2000	DYB2009-2010	四川省綿陽市
+CN	中華人民共和国	中国	People's Republic of China	China	牡丹江（ムーダンジァン）	Mudanjiang	0	44.551653	129.633168	1014206 	2000	DYB2009-2010	黒竜江省牡丹江市
+CN	中華人民共和国	中国	People's Republic of China	China	禹州（ユィヂョウ）	Yuzhou	0	34.140701	113.488478	1122669 	2000	DYB2009-2010	河南省許昌市禹州市
+CN	中華人民共和国	中国	People's Republic of China	China	玉樹（ユーシュー）	Yushu	0	33.011674	97.091934	1155670 	2000	DYB2009-2010	青海省玉樹市
+CN	中華人民共和国	中国	People's Republic of China	China	楽清（ユエチン）	Leqing	0	28.113725	120.983906	1162765 	2000	DYB2009-2010	浙江省温州市楽清市
+CN	中華人民共和国	中国	People's Republic of China	China	永城（ヨンチョン）	Yongcheng	0	33.929291	116.4495	1264607 	2000	DYB2009-2010	河南省商丘市永城市
+CN	中華人民共和国	中国	People's Republic of China	China	楽山（ラーシャン）	Leshan	0	29.552115	103.765678	1120158 	2000	DYB2009-2010	四川省楽山市
+CN	中華人民共和国	中国	People's Republic of China	China	莱蕪（ライウー）	Laiwu	0	36.213813	117.676723	1233525 	2000	DYB2009-2010	山東省莱蕪市
+CN	中華人民共和国	中国	People's Republic of China	China	蘭州（ランチョウ）	Lanzhou	0	36.061089	103.834303	2087759 	2000	DYB2009-2010	甘粛省蘭州市
+CN	中華人民共和国	中国	People's Republic of China	China	日照（リーザオ）	Rizhao	0	35.416734	119.526925	1148190 	2000	DYB2009-2010	山東省日照市
+CN	中華人民共和国	中国	People's Republic of China	China	廉江（リェンジャン）	Lianjiang	0	21.609672	110.286152	1205764 	2000	DYB2009-2010	広東省湛江市廉江市
+CN	中華人民共和国	中国	People's Republic of China	China	柳州（リュウヂョウ）	Liuzhou	0	24.326292	109.428608	1220392 	2000	DYB2009-2010	広西チワン族自治区柳州市
+CN	中華人民共和国	中国	People's Republic of China	China	瀏陽（リュウヤン）	Liuyang	0	28.162833	113.643076	1307572 	2000	DYB2009-2010	湖南省長沙市瀏陽市
+CN	中華人民共和国	中国	People's Republic of China	China	臨沂（リンイー）	Linyi	0	35.104673	118.356414	1938510 	2000	DYB2009-2010	山東省臨沂市
+CN	中華人民共和国	中国	People's Republic of China	China	瑞安（ルイアン）	Ruian	0	27.778657	120.655148	1207788 	2000	DYB2009-2010	浙江省温州市瑞安市
+CN	中華人民共和国	中国	People's Republic of China	China	六安（ルーアン）	Lu'an	0	31.734476	116.521442	1559037 	2000	DYB2009-2010	安徽省六安市
+CN	中華人民共和国	中国	People's Republic of China	China	如皋（ルーガオ）	Rugao	0	32.370557	120.574945	1362533 	2000	DYB2009-2010	江蘇省南通市如皋市
+CN	中華人民共和国	中国	People's Republic of China	China	瀘州（ルーヂョウ）	Luzhou	0	28.871569	105.44174	1252884 	2000	DYB2009-2010	四川省瀘州市
+CN	中華人民共和国	中国	People's Republic of China	China	陸豊（ルーフォン）	Lufeng	0	22.919228	115.652151	1164767 	2000	DYB2009-2010	広東省汕尾市陸豊市
+CN	中華人民共和国	中国	People's Republic of China	China	洛陽（ルオヤン）	Luoyang	0	34.620202	112.453926	1491680 	2000	DYB2009-2010	河南省洛陽市
+CN	中華人民共和国	中国	People's Republic of China	China	雷州（レイジョウ）	Leizhou	0	20.914178	110.096586	1268298 	2000	DYB2009-2010	広東省湛江市雷州市
+CN	中華人民共和国	中国	People's Republic of China	China	耒陽（レイヤン）	Leiyang	0	26.422277	112.859759	1180235 	2000	DYB2009-2010	湖南省衡陽市耒陽市
+TN	チュニジア共和国	チュニジア	Republic of Tunisia	Tunisia	チュニス	Tunis	1	36.8064948	10.1815316	1056247 	2014	DYB2017	
+CL	チリ共和国	チリ	Republic of Chile	Chile	サンティアゴ	Santiago	1	-33.4488897	-70.6692655	5613962 	2017	DYB2017	
+DE	ドイツ連邦共和国	ドイツ	Federal Republic of Germany	Germany	ベルリン	Berlin	1	52.5200066	13.404954	3613495 	2018	DYB2018	
+DE	ドイツ連邦共和国	ドイツ	Federal Republic of Germany	Germany	ケルン	Cologne	0	50.937531	6.9602786	1080394 	2018	DYB2018	
+DE	ドイツ連邦共和国	ドイツ	Federal Republic of Germany	Germany	ハンブルク	Hamburg	0	53.5510846	9.9936819	1830584 	2018	DYB2018	
+DE	ドイツ連邦共和国	ドイツ	Federal Republic of Germany	Germany	ミュンヘン	Munich	0	48.1351253	11.5819805	1456039 	2018	DYB2018	
+TG	トーゴ共和国	トーゴ	Republic of Togo	Togo	ロメ	Lome	1	6.1724969	1.2313618	1788600 	2015	DYB2017	
+DO	ドミニカ共和国	ドミニカ共和国	Dominican Republic	Dominican Republic	サントドミンゴ	Santo Domingo	1	18.4860575	-69.9312117	1029607 	2018	DYB2018	
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	アンカラ	Ankara	1	39.9333635	32.8597419	5445026 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	アイドゥン	Aydin	0	37.8380162	27.8455601	1080839 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	アダナ	Adana	0	36.9914194	35.3308285	2216475 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	アンタルヤ	Antalya	0	36.8968908	30.7133233	2364396 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	イスタンブール	Istanbul	0	41.0082376	28.9783589	15029231 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	イズミル	Izmir	0	38.423734	27.142826	4279677 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	ヴァン	Van	0	38.5012085	43.3729793	1106891 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	カイセリ	Kayseri	0	38.720489	35.482597	1376722 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	ガジアンテップ	Gaziantep	0	37.065953	37.37811	2005515 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	カフラマンマラシュ	Kahramanmaras	0	37.5752755	36.9228223	1127623 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	コジャエリ	Kocaeli	0	40.7654408	29.9408089	1883270 	2017	DYB2018	都市圏の人口，代表点はイズミット
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	コンヤ	Konya	0	37.8746429	32.4931554	2180149 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	サムスン	Samsun	0	41.2797031	36.3360667	1312990 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	シャンルウルファ	Sanliurfa	0	37.1674039	38.7955149	1985753 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	ディヤルバクル	Diyarbakir	0	37.9249733	40.2109826	1699901 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	テキルダー	Tekirdag	0	40.9780919	27.511674	1005463 	2017	DYB2018	新・百万都市，都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	デニズリ	Denizli	0	37.7830159	29.0963328	1018735 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	ハタイ	Hatay	0	36.202227	36.161379	1575226 	2017	DYB2018	都市圏の人口，代表点はアンタキヤ
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	バルケスィル	Balikesir	0	39.6532976	27.8903423	1204824 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	ブルサ	Bursa	0	40.1885281	29.0609636	2936803 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	マニサ	Manisa	0	38.6140337	27.4295624	1413041 	2017	DYB2018	都市圏の人口
+TR	トルコ共和国	トルコ	Republic of Turkey	Turkey	メルシン	Mersin	0	36.8121041	34.6414811	1793931 	2017	DYB2018	都市圏の人口
+NG	ナイジェリア連邦共和国	ナイジェリア	Federal Republic of Nigeria	Nigeria	イバダン	Ibadan	0	7.3775355	3.9470396	1835300 	1991	DYB2009-2010	
+NG	ナイジェリア連邦共和国	ナイジェリア	Federal Republic of Nigeria	Nigeria	カノ	Kano	0	12.0021794	8.5919561	2166554 	1991	DYB2009-2010	
+NG	ナイジェリア連邦共和国	ナイジェリア	Federal Republic of Nigeria	Nigeria	ラゴス	Lagos	0	6.5243793	3.3792057	5195247 	1991	DYB2009-2010	
+NE	ニジェール共和国	ニジェール	Republic of Niger	Niger	ニアメ	Niamey	1	13.5115963	2.1253854	1026848 	2012	DYB2017	
+JP	日本国	日本	Japan	Japan	東京	Tokyo	1	35.7090259	139.7319925	9272740 	2015	JP2015	人口は特別区（東京23区）の合計
+JP	日本国	日本	Japan	Japan	大阪	Osaka City	0	34.693837	135.502135	2691185 	2015	JP2015	
+JP	日本国	日本	Japan	Japan	川崎	Kawasaki	0	35.530811	139.703029	1475213 	2015	JP2015	
+JP	日本国	日本	Japan	Japan	京都	Kyoto City	0	35.011641	135.76819	1475183 	2015	JP2015	
+JP	日本国	日本	Japan	Japan	神戸	Kobe	0	34.69011	135.195466	1537272 	2015	JP2015	
+JP	日本国	日本	Japan	Japan	さいたま	Saitama City	0	35.861601	139.645354	1263979 	2015	JP2015	
+JP	日本国	日本	Japan	Japan	札幌	Sapporo	0	43.061945	141.354395	1952356 	2015	JP2015	
+JP	日本国	日本	Japan	Japan	仙台	Sendai	0	38.26797	140.869625	1082159 	2015	JP2015	
+JP	日本国	日本	Japan	Japan	名古屋	Nagoya	0	35.181754	136.906489	2295638 	2015	JP2015	
+JP	日本国	日本	Japan	Japan	広島	Hiroshima City	0	34.385216	132.45537	1194034 	2015	JP2015	
+JP	日本国	日本	Japan	Japan	福岡	Fukuoka City	0	33.590096	130.401754	1538681 	2015	JP2015	
+JP	日本国	日本	Japan	Japan	横浜	Yokohama	0	35.444155	139.637981	3724844 	2015	JP2015	
+NZ	ニュージーランド	ニュージーランド	New Zealand	New Zealand	オークランド	Auckland	0	-36.8484597	174.7633315	1695900 	2018	DYB2018	
+PK	パキスタン・イスラム共和国	パキスタン	Islamic Republic of Pakistan	Pakistan	イスラマバード	Islamabad	1	33.6844202	73.0478848	1014825 	2017	DYB2017	
+PK	パキスタン・イスラム共和国	パキスタン	Islamic Republic of Pakistan	Pakistan	カラチ	Karachi	0	24.8607343	67.0011364	14910352 	2017	DYB2017	
+PK	パキスタン・イスラム共和国	パキスタン	Islamic Republic of Pakistan	Pakistan	クエッタ	Quetta	0	30.1798398	66.9749731	1001205 	2017	DYB2017	
+PK	パキスタン・イスラム共和国	パキスタン	Islamic Republic of Pakistan	Pakistan	グジュランワラ	Gujranwala	0	32.1876919	74.1944529	2027001 	2017	DYB2017	
+PK	パキスタン・イスラム共和国	パキスタン	Islamic Republic of Pakistan	Pakistan	ハイデラバード	Hyderabad	0	25.3959687	68.357776	1732693 	2017	DYB2017	
+PK	パキスタン・イスラム共和国	パキスタン	Islamic Republic of Pakistan	Pakistan	ファイサラバード	Faisalabad	0	31.4503662	73.1349605	3203846 	2017	DYB2017	
+PK	パキスタン・イスラム共和国	パキスタン	Islamic Republic of Pakistan	Pakistan	ペシャーワル	Peshawar	0	34.0151366	71.5249154	1970042 	2017	DYB2017	
+PK	パキスタン・イスラム共和国	パキスタン	Islamic Republic of Pakistan	Pakistan	ムルタン	Multan	0	30.157458	71.5249154	1871843 	2017	DYB2017	
+PK	パキスタン・イスラム共和国	パキスタン	Islamic Republic of Pakistan	Pakistan	ラホール	Lahore	0	31.5203696	74.3587473	11126285 	2017	DYB2017	
+PK	パキスタン・イスラム共和国	パキスタン	Islamic Republic of Pakistan	Pakistan	ラワルピンディ	Rawalpindi	0	33.5651107	73.0169135	2098231 	2017	DYB2017	
+HU	ハンガリー	ハンガリー	Hungary	Hungary	ブダペスト	Budapest	1	47.497912	19.040235	1751219 	2017	DYB2018	
+BD	バングラデシュ人民共和国	バングラデシュ	People's Republic of Bangladesh	Bangladesh	ダッカ	Dhaka	1	23.810332	90.4125181	8906035 	2011	DYB2017	
+BD	バングラデシュ人民共和国	バングラデシュ	People's Republic of Bangladesh	Bangladesh	チッタゴン	Chittagong	0	22.356851	91.7831819	2591681 	2011	DYB2017	
+PH	フィリピン共和国	フィリピン	Republic of the Philippines	Philippines	マニラ	Manila	1	14.5995124	120.9842195	1780148 	2015	DYB2017	
+PH	フィリピン共和国	フィリピン	Republic of the Philippines	Philippines	カローカン	Caloocan	0	14.7565784	121.0449768	1583978 	2015	DYB2017	
+PH	フィリピン共和国	フィリピン	Republic of the Philippines	Philippines	ケソンシティ	Quezon City	0	14.6760413	121.0437003	2936116 	2015	DYB2017	
+PH	フィリピン共和国	フィリピン	Republic of the Philippines	Philippines	ダバオ	Davao City	0	7.190708	125.455341	1632991 	2015	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	ブラジリア	Brasilia	1	-15.794392	-47.882004	2977216 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	カンピーナス	Campinas	0	-22.910074	-47.062263	1173370 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	グアルーリョス	Guarulhos	0	-23.4543395	-46.5336678	1337087 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	クリチバ	Curitiba	0	-25.428765	-49.266797	1893997 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	ゴイアニア	Goiania	0	-16.6868982	-49.2648114	1448639 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	サルバドール	Salvador	0	-12.977749	-38.5016301	2938092 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	サンゴンサロ	Sao Goncalo	0	-22.8272883	-43.0637646	1044058 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	サンパウロ	Sao Paulo	0	-23.5505199	-46.6333094	12038175 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	サンルイス	Sao Luis	0	-2.5391099	-44.2829046	1082935 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	フォルタレザ	Fortaleza	0	-3.7327144	-38.5269981	2609716 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	ベレン	Belem	0	-1.4557292	-48.4901785	1446042 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	ベロオリゾンテ	Belo Horizonte	0	-19.9172987	-43.9345593	2513451 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	ポルトアレグレ	Porto Alegre	0	-30.0346471	-51.2176584	1481019 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	マセイオ	Maceio	0	-9.6498487	-35.7089492	1021709 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	マナウス	Manaus	0	-3.1190275	-60.0217314	2094391 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	リオデジャネイロ	Rio de Janeiro	0	-22.9068467	-43.1728965	6498837 	2016	DYB2017	
+BR	ブラジル連邦共和国	ブラジル	Federative Republic of Brazil	Brazil	レシフェ	Recife	0	-8.057881	-34.883105	1625583 	2016	DYB2017	
+FR	フランス共和国	フランス	French Republic	France	パリ	Paris	1	48.856614	2.3522219	2206488 	2015	DYB2018	
+BG	ブルガリア共和国	ブルガリア	Republic of Bulgaria	Bulgaria	ソフィア	Sofia	1	42.6977082	23.3218675	1238438 	2018	DYB2018	
+BF	ブルキナファソ	ブルキナファソ	Burkina Faso	Burkina Faso	ワガドゥグー	Ouagadougou	1	12.3714277	-1.5196603	1475223 	2006	DYB2017	
+VN	ベトナム社会主義共和国	ベトナム	Socialist Republic of Viet Nam	Viet Nam	ハノイ	Hanoi	1	21.0277644	105.8341598	1073760 	1992	DYB2009-2010	
+VN	ベトナム社会主義共和国	ベトナム	Socialist Republic of Viet Nam	Viet Nam	ホーチミン	Ho Chi Minh City	0	10.8230989	106.6296638	3015743 	1992	DYB2009-2010	
+VE	ベネズエラ・ボリバル共和国	ベネズエラ	Bolivarian Republic of Venezuela	Venezuela	カラカス	Caracas	1	10.4805937	-66.9036063	2082130 	2015	DYB2017	リベルタドル市のこと
+VE	ベネズエラ・ボリバル共和国	ベネズエラ	Bolivarian Republic of Venezuela	Venezuela	マラカイボ	Maracaibo	0	10.642707	-71.6125366	1653215 	2015	DYB2017	
+BY	ベラルーシ共和国	ベラルーシ	Republic of Belarus	Belarus	ミンスク	Minsk	1	53.9045398	27.5615244	1982444 	2018	DYB2018	
+PE	ペルー共和国	ペルー	Republic of Peru	Peru	リマ	Lima	1	-12.0463731	-77.042754	10350721 	2018	DYB2018	
+PL	ポーランド共和国	ポーランド	Republic of Poland	Poland	ワルシャワ	Warsaw	1	52.2296756	21.0122287	1754511 	2017	DYB2018	
+BO	ボリビア多民族国	ボリビア	Plurinational State of Bolivia	Bolivia	サンタクルス	Santa Cruz	0	-17.8145819	-63.1560853	1616063 	2010	DYB2017	
+HN	ホンジュラス共和国	ホンジュラス	Republic of Honduras	Honduras	テグシガルパ	Tegucigalpa	1	14.0722751	-87.192136	1157509 	2013	DYB2017	
+MG	マダガスカル共和国	マダガスカル	Republic of Madagascar	Madagascar	アンタナナリボ	Antananarivo	1	-18.8791902	47.5079055	1521898 	2018	DYB2018	
+ML	マリ共和国	マリ	Republic of Mali	Mali	バマコ	Bamako	1	12.6392316	-8.0028892	1810366 	2009	DYB2017	都市圏の人口
+MY	マレーシア	マレーシア	Malaysia	Malaysia	クアラルンプール	Kuala Lumpur	1	3.139003	101.686855	1824323 	2018	DYB2018	
+MM	ミャンマー連邦共和国	ミャンマー	Republic of the Union of Myanmar	Myanmar	ネーピードー	Naypyidaw	1	19.7633057	96.0785104	1160242 	2014	DYB2017	都市圏の人口
+MM	ミャンマー連邦共和国	ミャンマー	Republic of the Union of Myanmar	Myanmar	マンダレー	Mandalay	0	21.9588282	96.0891032	1225546 	2014	DYB2017	都市圏の人口
+MM	ミャンマー連邦共和国	ミャンマー	Republic of the Union of Myanmar	Myanmar	ヤンゴン	Yangon	0	16.8660694	96.195132	5211431 	2014	DYB2017	都市圏の人口
+MX	メキシコ合衆国	メキシコ	United Mexican States	Mexico	メキシコシティ	Mexico City	1	19.4326077	-99.133208	21800320 	2018	DYB2018	都市圏の人口
+MX	メキシコ合衆国	メキシコ	United Mexican States	Mexico	アグアスカリエンテス	Aguascalientes	0	21.8852562	-102.2915677	1056561 	2018	DYB2018	都市圏の人口
+MX	メキシコ合衆国	メキシコ	United Mexican States	Mexico	グアダラハラ	Guadalajara	0	20.6596988	-103.3496092	5060750 	2018	DYB2018	都市圏の人口
+MX	メキシコ合衆国	メキシコ	United Mexican States	Mexico	クエルナバカ	Cuernavaca	0	18.9242095	-99.2215659	1032278 	2018	DYB2018	都市圏の人口
+MX	メキシコ合衆国	メキシコ	United Mexican States	Mexico	ケレタロ	Queretaro	0	20.5887932	-100.3898881	1337686 	2018	DYB2018	都市圏の人口
+MX	メキシコ合衆国	メキシコ	United Mexican States	Mexico	サンルイスポトシ	San Luis Potosi	0	22.1564699	-100.9855409	1188221 	2018	DYB2018	都市圏の人口（サンルイスポトシ・ソレダー・デグラシアーノサンチェス）
+MX	メキシコ合衆国	メキシコ	United Mexican States	Mexico	ティフアナ	Tijuana	0	32.5149469	-117.0382471	2024994 	2018	DYB2018	都市圏の人口
+MX	メキシコ合衆国	メキシコ	United Mexican States	Mexico	トルーカ	Toluca	0	19.2826098	-99.6556653	2386157 	2018	DYB2018	都市圏の人口
+MX	メキシコ合衆国	メキシコ	United Mexican States	Mexico	トレオン	Torreon	0	25.5428443	-103.4067861	1417538 	2018	DYB2018	都市圏の人口（ラ・ラグナ），正解はトレオン市域
+MX	メキシコ合衆国	メキシコ	United Mexican States	Mexico	フアレス	Juarez	0	31.6903638	-106.4245478	1462133 	2018	DYB2018	都市圏の人口
+MX	メキシコ合衆国	メキシコ	United Mexican States	Mexico	プエブラ	Puebla	0	19.0414398	-98.2062727	3046766 	2018	DYB2018	都市圏の人口（プエブラ・トラスカラ），正解はプエブラ市域
+MX	メキシコ合衆国	メキシコ	United Mexican States	Mexico	メヒカリ	Mexicali	0	32.6245389	-115.4522623	1065882 	2018	DYB2018	都市圏の人口
+MX	メキシコ合衆国	メキシコ	United Mexican States	Mexico	メリダ	Merida	0	20.9673702	-89.5925857	1196520 	2018	DYB2018	都市圏の人口
+MX	メキシコ合衆国	メキシコ	United Mexican States	Mexico	モンテレー	Monterrey	0	25.6866142	-100.3161126	4834971 	2018	DYB2018	都市圏の人口
+MX	メキシコ合衆国	メキシコ	United Mexican States	Mexico	レオン	Leon	0	21.1250077	-101.6859605	1757811 	2018	DYB2018	都市圏の人口
+MZ	モザンビーク共和国	モザンビーク	Republic of Mozambique	Mozambique	マプト	Maputo	1	-25.969248	32.5731746	1241702 	2015	DYB2017	
+MA	モロッコ王国	モロッコ	Kingdom of Morocco	Morocco	カサブランカ	Casablanca	0	33.5731104	-7.5898434	3352399 	2014	DYB2017	
+MA	モロッコ王国	モロッコ	Kingdom of Morocco	Morocco	フェズ	Fez	0	34.0181246	-5.0078451	1126551 	2014	DYB2017	
+MN	モンゴル国	モンゴル	Mongolia	Mongolia	ウランバートル	Ulan Bator	1	47.8863988	106.9057439	1477174 	2018	DYB2018	
+JO	ヨルダン・ハシェミット王国	ヨルダン	Hashemite Kingdom of Jordan	Jordan	アンマン	Amman	1	31.9453666	35.9283716	3728346 	2018	DYB2018	
+LY	リビア	リビア	Libya	Libya	トリポリ	Tripoli	1	32.8872094	13.1913383	1500000 	1990	DYB2009-2010	
+RO	ルーマニア	ルーマニア	Romania	Romania	ブカレスト	Bucharest	1	44.4267674	26.1025384	1826830 	2017	DYB2018	
+RU	ロシア連邦	ロシア	Russian Federation	Russia	モスクワ	Moscow	1	55.755826	37.6172999	11918057 	2012	DYB2017	
+RU	ロシア連邦	ロシア	Russian Federation	Russia	ウファ	Ufa	0	54.7387621	55.9720554	1075007 	2012	DYB2017	
+RU	ロシア連邦	ロシア	Russian Federation	Russia	エカテリンブルク	Ekaterinburg	0	56.8389261	60.6057025	1386909 	2012	DYB2017	
+RU	ロシア連邦	ロシア	Russian Federation	Russia	オムスク	Omsk	0	54.9884804	73.3242361	1158627 	2012	DYB2017	
+RU	ロシア連邦	ロシア	Russian Federation	Russia	カザン	Kazan	0	55.8304307	49.0660806	1168745 	2012	DYB2017	
+RU	ロシア連邦	ロシア	Russian Federation	Russia	クラスノヤルスク	Krasnoyarsk	0	56.0152834	92.8932476	1006856 	2012	DYB2017	
+RU	ロシア連邦	ロシア	Russian Federation	Russia	サマラ	Samara	0	53.2415041	50.2212463	1170381 	2012	DYB2017	
+RU	ロシア連邦	ロシア	Russian Federation	Russia	サンクトペテルブルク	Saint Petersburg	0	59.9342802	30.3350986	4990602 	2012	DYB2017	
+RU	ロシア連邦	ロシア	Russian Federation	Russia	チェリャビンスク	Chelyabinsk	0	55.1644419	61.4368432	1149829 	2012	DYB2017	
+RU	ロシア連邦	ロシア	Russian Federation	Russia	ニジニノブゴロド	Nizhny Novgorod	0	56.2965039	43.936059	1257260 	2012	DYB2017	
+RU	ロシア連邦	ロシア	Russian Federation	Russia	ノボシビルスク	Novosibirsk	0	55.0083526	82.9357327	1511369 	2012	DYB2017	
+RU	ロシア連邦	ロシア	Russian Federation	Russia	ペルミ	Perm	0	58.0296813	56.2667916	1007272 	2012	DYB2017	
+RU	ロシア連邦	ロシア	Russian Federation	Russia	ボルゴグラード	Volgograd	0	48.708048	44.5133035	1018762 	2012	DYB2017	
+RU	ロシア連邦	ロシア	Russian Federation	Russia	ロストフナドヌー	Rostov-on-Don	0	47.2357137	39.701505	1100091 	2012	DYB2017	

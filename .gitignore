@@ -23,6 +23,7 @@ wheels/
 *.egg
 MANIFEST
 bdist.linux-x86_64/
+*.html
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
