@@ -68,22 +68,25 @@ class TSPModel:
         episode単位の初期化
         """
         log_green("Initialize")
-        self.loss  = None
+        self.loss  = 0
         self.step  = 0
-        self.state = None
+        self.state = "Tokyo"
         self.is_finish = False
         self.list_action_flg = np.ones_like(self.list_action).astype(bool)
-        self.next_state("Tokyo") # 初期値は東京
+        self.transition("Tokyo") # 初期値は東京
     
 
     def distance(self, city1: str, city2: str) -> float:
         """
         city1 から city2 への距離を計算する
         """
-        df = self.df
-        se1 = df[df["capital_en"] == city1].iloc[0]
-        se2 = df[df["capital_en"] == city2].iloc[0]
-        val = cal_rho(se1["lon"], se1["lat"], se2["lon"], se2["lat"]) / 1000.
+        if city1 == city2:
+            val = 0
+        else:
+            df = self.df
+            se1 = df[df["capital_en"] == city1].iloc[0]
+            se2 = df[df["capital_en"] == city2].iloc[0]
+            val = cal_rho(se1["lon"], se1["lat"], se2["lon"], se2["lat"]) / 1000.
         return val
     
 
@@ -110,19 +113,19 @@ class TSPModel:
     def reward(self, action: str):
         """
         あるstateでactionした時に得られる報酬と行動の結果を定義
-        ここでは移動した距離を損失という形の報酬で与える
+        ここでは移動した距離の合計を損失という形の報酬で与える
         """
-        return -1 * self.distance(self.state, action)
+        distance = -1 * self.distance(self.state, action)
+        return distance #self.loss + distance if self.loss is not None else distance
 
 
-    def next_state(self, action: str):
+    def transition(self, action: str):
         """
         action の結果得られる情報の更新を行う
         """
         self.step += 1
         # 距離の合計を計算する
-        if self.loss is None: self.loss = 0.0
-        else:                 self.loss += self.reward(action)
+        self.loss  = self.reward(action)
         self.state = action # 現在の地点をaction地点に
         self.list_action_flg[np.argmax(self.list_action == action)] = False #一度訪問した箇所はFalseに
         if action not in self.df_qvalue.index.tolist():
@@ -142,9 +145,9 @@ class TSPModel:
         q        =     self.df_qvalue.loc[self.state, action] # Q(s, a)
         max_q    = max(self.df_qvalue.loc[action, :].values)  # 遷移先状態でのmaxQ値
         reward   = self.reward(action)
-        q_update = q + (self.alpha * (reward + (self.gamma * max_q) - q))
-        log_yellow(f'reward: {reward}, update q: {q_update}')
-        self.df_qvalue[self.state][action] = q_update
+        q_update = (self.alpha * (reward + (self.gamma * max_q) - q))
+        log_yellow(f'q now: {q}, reward: {reward}, update q: {q_update}')
+        self.df_qvalue[self.state][action] = q + q_update
         
 
     def train(self, n_episode: int=100):
@@ -157,7 +160,7 @@ class TSPModel:
             while self.is_finish == False:
                 action = self.action()
                 self.update(action)
-                self.next_state(action)
+                self.transition(action)
 
 
     def play(self, output: str="result.html"):
@@ -177,7 +180,7 @@ class TSPModel:
             folium.Marker(location=[lat_e, lon_e], popup=folium.Popup(html=str(self.step), max_width="50%", show=True), tooltip=action).add_to(world_map)
             folium.PolyLine(locations=[[lat_s, lon_s], [lat_e, lon_e]], weight=1).add_to(world_map)
             log_blue(f'state: {self.state}, action: {action}')
-            self.next_state(action)
+            self.transition(action)
         self.epsilon = epsilon
         world_map.save(output)
         log_green(f'finish !! loss: {self.loss}')
