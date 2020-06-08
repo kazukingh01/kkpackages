@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import folium
 
+pd.options.display.max_rows = 100
+
 # local package
 from kkimagemods.util.logger import set_logger, set_loglevel
 logger = set_logger(__name__)
@@ -45,11 +47,13 @@ class TSPModel:
         # action は ある都市に行く行為なので、全ての都市の名前を入れる
         self.list_action = np.random.permutation(df["capital_en"].unique())
         # Q table の作成
-        self.df_qvalue = pd.DataFrame(0.0, index=self.list_action.copy(), columns=self.list_action.copy(), dtype=float)
+        self.df_qvalue = pd.DataFrame(np.nan, index=self.list_action.copy(), columns=self.list_action.copy(), dtype=float)
 
         # init 内で初期化する値. 敢えてNone
         self.list_action_flg = None
         self.state           = None
+        self.state_prev      = None
+        self.action_prev     = None
         self.is_finish       = False
         self.loss            = None
         self.step            = None
@@ -70,8 +74,10 @@ class TSPModel:
         log_green("Initialize")
         self.loss  = 0
         self.step  = 0
-        self.state = "Tokyo"
-        self.is_finish = False
+        self.state       = "Tokyo"
+        self.state_prev  = "Tokyo"
+        self.action_prev = None
+        self.is_finish   = False
         self.list_action_flg = np.ones_like(self.list_action).astype(bool)
         self.transition("Tokyo") # 初期値は東京
     
@@ -104,8 +110,9 @@ class TSPModel:
             # 全て同じ確率のもと一つ選択する
             action = list_action[np.random.permutation(np.arange(list_action.shape[0]))[0]]
         else:
-            se_qvalue = self.df_qvalue.loc[self.state, self.list_action_flg]
+            se_qvalue = self.df_qvalue.loc[self.df_qvalue.index == self.state, self.list_action_flg].iloc[0, :]
             action = se_qvalue.idxmax()
+            if type(action) == np.float and np.isnan(action): action = list_action[0]
         logger.debug(f'action: {action}. max Q value: {"random" if se_qvalue is None else se_qvalue.max()}')
         return action
 
@@ -115,7 +122,7 @@ class TSPModel:
         あるstateでactionした時に得られる報酬と行動の結果を定義
         ここでは移動した距離の合計を損失という形の報酬で与える
         """
-        distance = -1 * self.distance(self.state, action)
+        distance = -1 * self.distance(self.state_prev, action)
         return distance #self.loss + distance if self.loss is not None else distance
 
 
@@ -126,28 +133,32 @@ class TSPModel:
         self.step += 1
         # 距離の合計を計算する
         self.loss  = self.reward(action)
-        self.state = action # 現在の地点をaction地点に
+        self.action_prev = action
+        self.state_prev  = self.state
+        self.state       = action # 現在の地点をaction地点に
         self.list_action_flg[np.argmax(self.list_action == action)] = False #一度訪問した箇所はFalseに
-        if action not in self.df_qvalue.index.tolist():
-            # もし Q table の state がない場合は作成する
-            self.df_qvalue.loc[action] = 0.0
-
         # もし、全ての都市を訪問し終えたら完了フラグを立てる
         if (self.list_action_flg == True).sum() == 0:
             self.is_finish = True
     
 
-    def update(self, action: str):
+    def update(self):
         """
         Q値の更新を行う
         """
         # Q(s, a) = Q(s, a) + alpha*(r+gamma*maxQ(s')-Q(s, a))
-        q        =     self.df_qvalue.loc[self.state, action] # Q(s, a)
-        max_q    = max(self.df_qvalue.loc[action, :].values)  # 遷移先状態でのmaxQ値
-        reward   = self.reward(action)
+        q        =     self.df_qvalue.loc[self.df_qvalue.index == self.state_prev, self.action_prev].iloc[0] # Q(s, a)
+        if np.isnan(    q): q     = 0.0
+        max_q    = np.nanmax(self.df_qvalue.loc[self.df_qvalue.index == self.state, :].values)  # 遷移先状態でのmaxQ値
+        if np.isnan(max_q): max_q = 0.0
+        reward   = self.reward(self.action_prev)
         q_update = (self.alpha * (reward + (self.gamma * max_q) - q))
-        log_yellow(f'q now: {q}, reward: {reward}, update q: {q_update}')
-        self.df_qvalue[self.state][action] = q + q_update
+        logger.debug(f"state_prev: {self.state_prev}, action_prev: {self.action_prev}, state: {self.state}")
+        log_yellow(f'q now: {q}, max q: {max_q}, reward: {reward}, update q: {q_update}')
+
+        # なんか更新できないので、参照形式で更新する
+        ndf   = self.df_qvalue.values
+        ndf[self.df_qvalue.index == self.state_prev, self.df_qvalue.columns == self.action_prev] = q + q_update
         
 
     def train(self, n_episode: int=100):
@@ -159,8 +170,8 @@ class TSPModel:
             self.init()
             while self.is_finish == False:
                 action = self.action()
-                self.update(action)
                 self.transition(action)
+                self.update()
 
 
     def play(self, output: str="result.html"):
@@ -184,3 +195,112 @@ class TSPModel:
         self.epsilon = epsilon
         world_map.save(output)
         log_green(f'finish !! loss: {self.loss}')
+
+
+
+
+class TSPModel2(TSPModel):
+    """
+    巡回セールスマン問題に対する強化学習モデルのクラス
+    全ての都市を訪問するまでの総合距離を最小化するアプローチを取る
+    """
+
+    def __init__(self, epsilon, alpha, gamma):
+        df = pd.read_csv("../data/s59h30megacities_utf8.csv", sep="\t")
+        df = df[df["iscapital"] == 1]
+        df["capital_en"] = df["capital_en"].replace(r"\s", "_", regex=True)
+        ndf = np.append(np.random.permutation(df["capital_en"].unique())[:8], "Tokyo") # 都市を限定する
+        df = df[df["capital_en"].isin(ndf)] # 10都市だけ
+
+        self.df = df.copy()
+
+        # action は ある都市に行く行為なので、全ての都市の名前を入れる
+        self.list_action = np.random.permutation(df["capital_en"].unique())
+        # Q table の作成
+        ## state は 過去に行った都市も考慮する
+        list_state = []
+        for x in self.list_action:
+            for i in np.arange(2**len(self.list_action)):
+                list_state.append(tuple([x] + [int(xx) for xx in bin(i).replace("0b","").zfill(len(self.list_action))]))
+        self.df_qvalue = pd.DataFrame(np.nan, index=list_state, columns=self.list_action.copy(), dtype=float)
+
+        # init 内で初期化する値. 敢えてNone
+        self.list_action_flg = None
+        self.state           = None
+        self.is_finish       = False
+        self.loss            = None
+        self.step            = None
+
+        # ハイパーパラメータ
+        self.epsilon = epsilon # greedy 行動の閾値
+        self.alpha = alpha
+        self.gamma = gamma
+
+        # 初期化
+        self.init()
+
+
+    def init(self):
+        """
+        episode単位の初期化
+        """
+        log_green("Initialize")
+        initcp = np.random.permutation(self.list_action)[0]
+        self.loss  = 0
+        self.step  = 0
+        self.state = [initcp] + [0 for x in self.list_action]
+        self.is_finish = False
+        self.list_action_flg = np.ones_like(self.list_action).astype(bool)
+        self.transition(initcp) # 初期値は東京
+
+
+    def reward(self, action: str):
+        """
+        あるstateでactionした時に得られる報酬と行動の結果を定義
+        ここでは移動した距離の合計を損失という形の報酬で与える
+        """
+        distance = -1 * self.distance(self.state_prev[0], action)
+        self.loss  += distance
+        return self.loss if self.is_finish else distance
+
+
+    def transition(self, action: str):
+        """
+        action の結果得られる情報の更新を行う
+        """
+        self.step += 1
+        # 距離の合計を計算する
+        self.action_prev = action
+        self.state_prev  = self.state # tuple は copyできない
+        self.state = list(self.state)
+        self.state[0] = action # 現在の地点をaction地点に
+        self.state[np.where(self.list_action == action)[0].min() + 1] = 1 # 過去に訪問した都市は訪問済みのステータスに変更する
+        self.state = tuple(self.state)
+        self.list_action_flg[np.argmax(self.list_action == action)] = False #一度訪問した箇所はFalseに
+        # もし、全ての都市を訪問し終えたら完了フラグを立てる
+        if (self.list_action_flg == True).sum() == 0:
+            self.is_finish = True
+
+
+    def play(self, output: str="result.html"):
+        """
+        学習した結果のplay
+        """
+        world_map = folium.Map() # 世界地図の作成
+        epsilon = self.epsilon
+        self.epsilon = 0.0 # play 時は randmo な行動をなくす
+        self.init()
+        lat_s, lon_s = self.get_lat_lon(self.state[0])
+        folium.Marker(location=[lat_s, lon_s], popup=self.state[0]).add_to(world_map)
+        while self.is_finish == False:
+            lat_s, lon_s = self.get_lat_lon(self.state[0])
+            action = self.action()
+            lat_e, lon_e = self.get_lat_lon(action)
+            folium.Marker(location=[lat_e, lon_e], popup=folium.Popup(html=str(self.step), max_width="50%", show=True), tooltip=action).add_to(world_map)
+            folium.PolyLine(locations=[[lat_s, lon_s], [lat_e, lon_e]], weight=1).add_to(world_map)
+            log_blue(f'state: {self.state}, action: {action}')
+            self.transition(action)
+        self.epsilon = epsilon
+        world_map.save(output)
+        log_green(f'finish !! loss: {self.loss}')
+
