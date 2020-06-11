@@ -102,7 +102,6 @@ class DQN(object):
         """
         Q table の更新を行う
         Q(s, a) = Q(s, a) + alpha*(r+gamma*maxQ(s')-Q(s, a))
-        DQN では 
         """
         # Store the transition in memory
         self.memory.push(state, action, reward, state_next)
@@ -126,9 +125,13 @@ class DQN(object):
         tens_pred = self.qnet(tens_pred)
         tens_pred = tens_pred * tens_act
         with torch.no_grad():
+            # Double DQN では行動は学習中のネットワークで決定する. ただ、その行動における価値については、freez NN で決める
             tens_ans  = self.conv_onehot(state_next, calc_state=True)
-            tens_ans  = self.qnet_freez(tens_ans)
-            tens_max  = torch.tensor(reward) + self.gamma * tens_ans.max(axis=1)[0]
+            tens_ans1 = self.qnet(tens_ans)
+            tens_ans1 = tens_ans1.max(axis=1)[1] # 最大となるところのindex
+            tens_ans2 = self.qnet_freez(tens_ans)
+            tens_ans  = tens_ans2[:, tens_ans1][:, 0]
+            tens_max  = torch.tensor(reward) + self.gamma * tens_ans
             tens_max  = torch.cat([tens_max.reshape(-1, 1) for i in range(tens_act.shape[1])], dim=1)
             tens_ans  = tens_max * tens_act
         loss = self.criterion(tens_pred, tens_ans)
