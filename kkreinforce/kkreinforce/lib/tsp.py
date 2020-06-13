@@ -2,11 +2,12 @@ from typing import List
 import pandas as pd
 import numpy as np
 import folium
+import torch
 pd.options.display.max_rows = 100
 
 # local package
 from kkreinforce.lib.qlearn import QTable
-from kkreinforce.lib.dqn import DQN
+from kkreinforce.lib.dqn import DQN, TorchNN, Layer
 from kkimagemods.util.logger import set_logger, set_loglevel
 logger = set_logger(__name__)
 def log_green(  msg: str): logger.info(msg, color=["BOLD", "GREEN"])
@@ -36,7 +37,8 @@ def cal_rho(lon_a,lat_a,lon_b,lat_b):
 class TSPModel:
     """
     巡回セールスマン問題に対する強化学習モデルのクラス
-    全ての都市を訪問するまでの総合距離を最小化するアプローチを取る
+    全ての都市を訪問するまでの総合距離を最小化することを目指す
+    このノーマル
     """
 
     def __init__(self, epsilon, alpha, gamma):
@@ -188,11 +190,6 @@ class TSPModel:
 
 
 class TSPModel2(TSPModel):
-    """
-    巡回セールスマン問題に対する強化学習モデルのクラス
-    全ての都市を訪問するまでの総合距離を最小化するアプローチを取る
-    """
-
     def __init__(self, epsilon, alpha, gamma):
         df = pd.read_csv("../data/s59h30megacities_utf8.csv", sep="\t")
         df = df[df["iscapital"] == 1]
@@ -308,7 +305,53 @@ class TSPModel3(TSPModel):
         # action は ある都市に行く行為なので、全ての都市の名前を入れる
         self.list_action = np.random.permutation(df["capital_en"].unique())
         # Q table の作成
-        self.qtable = DQN(self.list_action, self.list_action, alpha=alpha, gamma=gamma)
+        torch_nn = TorchNN(len(self.list_action), 
+            Layer("fc1",   torch.nn.Linear, 128,  (), {}),
+            Layer("relu1", torch.nn.ReLU,   None,  (), {}),
+            Layer("fc2",   torch.nn.Linear, 128,  (), {}),
+            Layer("relu2", torch.nn.ReLU,   None,  (), {}),
+            Layer("fc3",   torch.nn.Linear, len(self.list_action),  (), {}),
+        )
+        self.qtable = DQN(torch_nn, self.list_action, self.list_action, alpha=alpha, gamma=gamma)
+
+        # init 内で初期化する値. 敢えてNone
+        self.list_action_flg = None
+        self.state           = None
+        self.state_prev      = None
+        self.action_prev     = None
+        self.is_finish       = False
+        self.loss            = None
+        self.step            = None
+
+        # ハイパーパラメータ
+        self.epsilon = epsilon # greedy 行動の閾値
+
+        # 初期化
+        self.init()
+
+
+
+class TSPModel4(TSPModel):
+    def __init__(self, epsilon, alpha, gamma):
+        df = pd.read_csv("../data/s59h30megacities_utf8.csv", sep="\t")
+        df = df[df["iscapital"] == 1]
+        df["capital_en"] = df["capital_en"].replace(r"\s", "_", regex=True)
+        ndf = np.append(np.random.permutation(df["capital_en"].unique())[:9], "Tokyo") # 都市を限定する
+        df = df[df["capital_en"].isin(ndf)] # 10都市だけ
+
+        self.df = df.copy()
+
+        # action は ある都市に行く行為なので、全ての都市の名前を入れる
+        self.list_action = np.random.permutation(df["capital_en"].unique())
+        # Q table の作成
+        torch_nn = TorchNN(len(self.list_action), 
+            Layer("lstm",  torch.nn.LSTM,   128,  (), {}),
+            Layer("relu1", torch.nn.ReLU,   None,  (), {}),
+            Layer("fc2",   torch.nn.Linear, 128,  (), {}),
+            Layer("relu2", torch.nn.ReLU,   None,  (), {}),
+            Layer("fc3",   torch.nn.Linear, len(self.list_action),  (), {}),
+        )
+        self.qtable = DQN(torch_nn, self.list_action, self.list_action, alpha=alpha, gamma=gamma)
 
         # init 内で初期化する値. 敢えてNone
         self.list_action_flg = None

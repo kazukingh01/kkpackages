@@ -13,10 +13,65 @@ _logname = __name__
 logger = set_logger(__name__)
 
 Transition = namedtuple('Transition',('state', 'action', 'reward', 'state_next'))
+Layer      = namedtuple("Layer", ("name", "module", "node", "params", "kwards"))
+
+
+class TorchNN(nn.Module):
+
+    def __init__(self, in_size: int, *layers: List[Layer]):
+        """
+        Layer: ("name", "module", "node", "params", "kwards")
+            name: str. module name
+            module: class. torch module
+            node: int or None. number of output node.
+            params: tuple. *params で渡す
+            kwards: dict. **kwards で渡す
+        """
+        super(TorchNN, self).__init__()
+        for layer in layers:
+            if layer.node is None:
+                self.add_module(layer.name, layer.module(*layer.params, **layer.kwards))
+            else:
+                self.add_module(layer.name, layer.module(in_size, layer.node, *layer.params, **layer.kwards))
+                in_size = layer.node
+        
+        # 計算後の output でどこを使うかの index を持っておく
+        self.indexes = []
+        self.__compile()
+    
+
+    def __compile(self):
+        """
+        LSTMなどは使うoutputの内容が違ってくる.
+        forward 内にできるだけ if 文などの条件分岐で計算を遅くしないため
+        予め計算過程を最適化しておく
+        """
+        for i, x in enumerate(self.modules()):
+            if i == 0:
+                self.indexes.append(None)
+                continue # 0 番目は全体のLayerが呼び出されるため
+            if type(x) == torch.nn.LSTM:
+                self.indexes.append("last")
+            else:
+                self.indexes.append(None)
+
+
+    def __call__(self, input: torch.Tensor):
+        output = input.clone()
+        for i, module in enumerate(self.modules()):
+            if i == 0: continue
+            if   self.indexes[i] is None:
+                output = module(output)
+            elif self.indexes[i] == "last":
+                output = module(output)
+                output = output[0][:, -1, :]
+            else:
+                output = module(output)
+        return output
+
 
 class DQN(object):
-
-    def __init__(self, state_list: List[object], action_list: List[object], alpha: float, gamma: float):
+    def __init__(self, torch_nn: TorchNN, state_list: List[object], action_list: List[object], alpha: float, gamma: float):
         super().__init__()
         self.q     = pd.DataFrame(np.nan, index=state_list, columns=action_list, dtype=float)
         self.ndf   = self.q.values # 遅いので参照形式にしておく
@@ -30,14 +85,7 @@ class DQN(object):
 
         # NN config
         ## Q Network
-        self.qnet = nn.Sequential()
-        self.qnet.add_module("fc1",   nn.Linear(len(state_list), 128))
-        self.qnet.add_module("relu1", nn.ReLU())
-        self.qnet.add_module("fc2",   nn.Linear(128, 128))
-        self.qnet.add_module("relu2", nn.ReLU())
-        self.qnet.add_module("fc3",   nn.Linear(128, 128))
-        self.qnet.add_module("relu3", nn.ReLU())
-        self.qnet.add_module("fc4",   nn.Linear(128, len(action_list)))
+        self.qnet = torch_nn
         ## optimizer
         self.optimizer = torch.optim.SGD(self.qnet.parameters(), lr=0.001, momentum=0.9, weight_decay=0)
         ## loss function
@@ -79,6 +127,7 @@ class DQN(object):
         """
         Index が object や tuple であることを考慮して、次のように返却する
         """
+        self.qnet.eval()
         with torch.no_grad():
             tens = self.conv_onehot(state, calc_state=True)
             tens = self.qnet(tens)
@@ -89,6 +138,7 @@ class DQN(object):
 
 
     def get_max(self, state: object, list_action_flg: List[bool] = None):
+        self.qnet.eval()
         with torch.no_grad():
             tens    = self.conv_onehot(state, calc_state=True)
             tens    = self.qnet(tens)
@@ -98,10 +148,12 @@ class DQN(object):
             return val_max, action
 
 
-    def update(self, state, action, reward, state_next):
+    def update(self, state, action, reward, state_next, unit_of_learning: str=None):
         """
-        Q table の更新を行う
+        Q NN の更新を行う
         Q(s, a) = Q(s, a) + alpha*(r+gamma*maxQ(s')-Q(s, a))
+        
+        1 episode 単位での学習を考慮する
         """
         # Store the transition in memory
         self.memory.push(state, action, reward, state_next)
@@ -147,17 +199,30 @@ class DQN(object):
 
 
 class ReplayMemory(object):
-    def __init__(self, capacity):
+    def __init__(self, capacity, unit_memory: str=None):
         self.capacity = capacity
-        self.memory = []
+        self.memory   = []
         self.position = 0
+        self.memory_in_episode = []
+        self.unit_memory = unit_memory
 
-    def push(self, *args):
+    def push(self, *args, on_episode=False):
         """Saves a transition."""
-        if len(self.memory) < self.capacity:
-            self.memory.append(None)
-        self.memory[self.position] = Transition(*args)
-        self.position = (self.position + 1) % self.capacity
+        if self.unit_memory is None:
+            if len(self.memory) < self.capacity:
+                self.memory.append(None)
+            self.memory[self.position] = Transition(*args)
+            self.position = (self.position + 1) % self.capacity
+        elif self.unit_memory == "episode":
+            # episode 単位のまとまりで、memory に保存する
+            if len(self.memory) < self.capacity:
+                if on_episode:
+                    self.memory_in_episode.append(Transition(*args))
+                else:
+                    if len(self.memory) < self.capacity:
+                        self.memory.append(None)
+                    self.memory[self.position] = Transition(*args)
+                    self.position = (self.position + 1) % self.capacity
 
     def sample(self, batch_size):
         return random.sample(self.memory, batch_size)
@@ -173,3 +238,8 @@ if __name__ == "__main__":
     list_action = [1, 2, 3, 4]
     dqn = DQN(list_state, list_action, alpha=1, gamma=1)
 
+    kknn = TorchNN(100,
+        Layer("fc1",   nn.Linear, 128, (), {}), 
+        Layer("relu1", nn.ReLU, None,  (), {}), 
+        Layer("fc2",   nn.Linear, 64,  (), {}), 
+    )
