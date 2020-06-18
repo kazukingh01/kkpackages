@@ -6,14 +6,14 @@ import torch
 pd.options.display.max_rows = 100
 
 # local package
-from kkreinforce.lib.qlearn import QTable
+from kkreinforce.lib.qlearn import QTable, QLearn, StateManager
 from kkreinforce.lib.dqn import DQN, TorchNN, Layer
 from kkimagemods.util.logger import set_logger, set_loglevel
 logger = set_logger(__name__)
-def log_green(  msg: str): logger.info(msg, color=["BOLD", "GREEN"])
-def log_blue(   msg: str): logger.info(msg, color=["BOLD", "BLUE"])
-def log_yellow( msg: str): logger.info(msg, color=["BOLD", "YELLOW"])
 
+
+def sigmoid(a):
+    return 1 / (1 + np.exp(-a))
 
 def cal_rho(lon_a,lat_a,lon_b,lat_b):
     ra=6378.140  # equatorial radius (km)
@@ -33,56 +33,47 @@ def cal_rho(lon_a,lat_a,lon_b,lat_b):
     return float(rho)
 
 
+from folium import MacroElement
+from folium.features import Template
+class DivIcon(MacroElement):
+    def __init__(self, html='', size=(30,30), anchor=(0,0), style=''):
+        """TODO : docstring here"""
+        super(DivIcon, self).__init__()
+        self._name = 'DivIcon'
+        self.size = size
+        self.anchor = anchor
+        self.html = html
+        self.style = style
 
-class TSPModel:
-    """
-    巡回セールスマン問題に対する強化学習モデルのクラス
-    全ての都市を訪問するまでの総合距離を最小化することを目指す
-    このノーマル
-    """
+        self._template = Template(u"""
+            {% macro header(this, kwargs) %}
+              <style>
+                .{{this.get_name()}} {
+                    {{this.style}}
+                    }
+              </style>
+            {% endmacro %}
+            {% macro script(this, kwargs) %}
+                var {{this.get_name()}} = L.divIcon({
+                    className: '{{this.get_name()}}',
+                    iconSize: [{{ this.size[0] }},{{ this.size[1] }}],
+                    iconAnchor: [{{ this.anchor[0] }},{{ this.anchor[1] }}],
+                    html : "{{this.html}}",
+                    });
+                {{this._parent.get_name()}}.setIcon({{this.get_name()}});
+            {% endmacro %}
+            """)
 
-    def __init__(self, epsilon, alpha, gamma):
-        df = pd.read_csv("../data/s59h30megacities_utf8.csv", sep="\t")
+
+class TSPModelBase(object):
+    def __init__(self, file_csv: str="../data/s59h30megacities_utf8.csv", n_capital: int=None):
+        df = pd.read_csv(file_csv, sep="\t")
         df = df[df["iscapital"] == 1]
         df["capital_en"] = df["capital_en"].replace(r"\s", "_", regex=True)
-
+        if n_capital is not None:
+            ndf = np.random.permutation(df["capital_en"].unique())[:n_capital] # 都市を限定する
+            df  = df[df["capital_en"].isin(ndf)]
         self.df = df.copy()
-
-        # action は ある都市に行く行為なので、全ての都市の名前を入れる
-        self.list_action = np.random.permutation(df["capital_en"].unique())
-        # Q table の作成
-        self.qtable = QTable(self.list_action, self.list_action, alpha=alpha, gamma=gamma)
-
-        # init 内で初期化する値. 敢えてNone
-        self.list_action_flg = None
-        self.state           = None
-        self.state_prev      = None
-        self.action_prev     = None
-        self.is_finish       = False
-        self.loss            = None
-        self.step            = None
-
-        # ハイパーパラメータ
-        self.epsilon = epsilon # greedy 行動の閾値
-
-        # 初期化
-        self.init()
-
-
-    def init(self):
-        """
-        episode単位の初期化
-        """
-        log_green("Initialize")
-        self.loss  = 0
-        self.step  = 0
-        self.state       = "Tokyo"
-        self.state_prev  = "Tokyo"
-        self.action_prev = None
-        self.is_finish   = False
-        self.list_action_flg = np.ones_like(self.list_action).astype(bool)
-        self.transition("Tokyo") # 初期値は東京
-    
 
     def distance(self, city1: str, city2: str) -> float:
         """
@@ -94,277 +85,329 @@ class TSPModel:
             df = self.df
             se1 = df[df["capital_en"] == city1].iloc[0]
             se2 = df[df["capital_en"] == city2].iloc[0]
-            val = cal_rho(se1["lon"], se1["lat"], se2["lon"], se2["lat"]) / 1000.
+            val = cal_rho(se1["lon"], se1["lat"], se2["lon"], se2["lat"]) / 10000.
         return val
     
-
     def get_lat_lon(self, city: str) -> (float, float, ):
         df = self.df
         return df[df["capital_en"] == city].iloc[0][["lat", "lon"]].values
 
 
-    def action(self):
-        # 一度訪問した箇所はaction listから外す
-        list_action = self.list_action[self.list_action_flg]
-        action, se_qvalue = None, None
-        # greedy選択
-        if np.random.uniform() < self.epsilon:  # random行動
-            # 全て同じ確率のもと一つ選択する
-            action = list_action[np.random.permutation(np.arange(list_action.shape[0]))[0]]
-        else:
-            action = self.qtable.get_max(self.state, list_action_flg=self.list_action_flg)[1]
-        logger.debug(f'action: {action}. max Q value: {"random" if se_qvalue is None else se_qvalue.max()}')
+
+class TSPModel(TSPModelBase, QLearn):
+    def __init__(self, epsilon: float, alpha: float, gamma: float, file_csv: str="../data/s59h30megacities_utf8.csv", n_capital: int=None):
+        # まずは Base class で初期化して, df を load
+        TSPModelBase.__init__(self, file_csv=file_csv, n_capital=n_capital)
+
+        # QTable の定義
+        self.list_action = np.random.permutation(self.df["capital_en"].unique())
+        qtable = QTable(state_list=self.list_action, action_list=self.list_action, alpha=alpha, gamma=gamma)
+        QLearn.__init__(self, qtable=qtable, epsilon=epsilon)
+
+
+    def initialize(self):
+        """
+        episode単位の初期化
+        """
+        self.action_prev  = "Tokyo"
+        self.state_now    = self.action_prev
+        self.state_prev   = self.action_prev
+        self.reward_prev  = 0
+        self.prob_actions = np.ones_like(self.list_action).astype(bool)
+
+        self.country_prev = self.action_prev
+        self.country_now  = self.action_prev
+        self.loss         = 0
+        self.transition(action=self.action_prev)
+
+
+    def state(self, state_prev: object=None, action_prev: object=None) -> object:
+        """
+        state_prev と action_prev から決まる state を返却する
+        """
+        action_prev = self.action_prev if action_prev is None else action_prev
+        return action_prev
+
+
+    def action_best(self) -> object:
+        """
+        state_now から決定される最適 action を返却する
+        """
+        _, action = self.qtable.get_max(self.state_now, prob_actions=self.prob_actions)
         return action
 
 
-    def reward(self, action: str):
+    def action_random(self) -> object:
         """
-        あるstateでactionした時に得られる報酬と行動の結果を定義
-        ここでは移動した距離の合計を損失という形の報酬で与える
+        state_now から決定される random action を返却する
         """
-        distance = -1 * self.distance(self.state_prev, action)
-        return distance #self.loss + distance if self.loss is not None else distance
+        ndf = self.list_action[self.prob_actions]
+        return np.random.permutation(ndf)[0]
 
 
-    def transition(self, action: str):
+    def reward(self, state_prev: object=None, action_prev: object=None) -> object:
         """
-        action の結果得られる情報の更新を行う
+        state_prev と action_prev から決まる reward を返却する
         """
-        self.step += 1
-        # 距離の合計を計算する
-        self.loss  = self.reward(action)
-        self.action_prev = action
-        self.state_prev  = self.state
-        self.state       = action # 現在の地点をaction地点に
-        self.list_action_flg[np.argmax(self.list_action == action)] = False #一度訪問した箇所はFalseに
-        # もし、全ての都市を訪問し終えたら完了フラグを立てる
-        if (self.list_action_flg == True).sum() == 0:
-            self.is_finish = True
-    
+        state_prev  = self.state_prev  if state_prev  is None else state_prev 
+        action_prev = self.action_prev if action_prev is None else action_prev 
+        dist = self.distance(state_prev, action_prev)
+        self.loss += dist
+        return -1 * dist
 
-    def update(self):
-        """
-        Q値の更新を行う
-        """
-        # Q(s, a) = Q(s, a) + alpha*(r+gamma*maxQ(s')-Q(s, a))
-        reward   = self.reward(self.action_prev)
-        self.qtable.update(self.state_prev, self.action_prev, reward, self.state)
-        logger.debug(f"state_prev: {self.state_prev}, action_prev: {self.action_prev}, state: {self.state}")
-        
 
-    def train(self, n_episode: int=100):
-        """
-        学習する
-        """
-        for i in range(n_episode):
-            log_blue(f"episode: {i}")
-            self.init()
-            while self.is_finish == False:
-                action = self.action()
-                self.transition(action)
-                self.update()
+    def transition_middle(self):
+        self.prob_actions[self.list_action == self.action_prev] = False
 
+
+    def transition_after(self):
+        self.country_prev = self.country_now
+        self.country_now  = self.action_prev
+
+
+    def is_finish(self) -> bool:
+        if (self.prob_actions == True).sum() == 0:
+            return True
+        else:
+            return False
+
+
+    """ ※ここから独自関数※ """
 
     def play(self, output: str="result.html"):
         """
         学習した結果のplay
         """
         world_map = folium.Map() # 世界地図の作成
-        epsilon = self.epsilon
-        self.epsilon = 0.0 # play 時は randmo な行動をなくす
         self.init()
-        lat_s, lon_s = self.get_lat_lon(self.state)
-        folium.Marker(location=[lat_s, lon_s], popup=self.state).add_to(world_map)
-        while self.is_finish == False:
-            lat_s, lon_s = self.get_lat_lon(self.state)
-            action = self.action()
+        lat_s, lon_s = self.get_lat_lon(self.country_now)
+        folium.Marker(location=[lat_s, lon_s], popup=self.country_now).add_to(world_map)
+        while self.is_finish() == False:
+            action = self.action_best()
+            dist   = self.distance(self.country_now, action)
+            lat_s, lon_s = self.get_lat_lon(self.country_now)
             lat_e, lon_e = self.get_lat_lon(action)
             folium.Marker(location=[lat_e, lon_e], popup=folium.Popup(html=str(self.step), max_width="50%", show=True), tooltip=action).add_to(world_map)
-            folium.PolyLine(locations=[[lat_s, lon_s], [lat_e, lon_e]], weight=1).add_to(world_map)
-            log_blue(f'state: {self.state}, action: {action}')
-            self.transition(action)
-        self.epsilon = epsilon
+            folium.PolyLine(locations=[[lat_s, lon_s], [lat_e, lon_e]], popup=folium.Popup(html=str(round(dist, 3)), max_width="50%", show=True), weight=1).add_to(world_map)
+            self.transition(action=action)
+            logger.info(f'country: {self.country_prev}, action: {self.action_prev}', color=["BOLD", "BLUE"])
+
+        folium.map.Marker(self.get_lat_lon(action),
+            icon=DivIcon(size=(150,36), anchor=(150,0), html=str(self.loss),
+            style="""
+                font-size:36px;
+                background-color: transparent;
+                border-color: transparent;
+                text-align: right;
+                """
+            )
+        ).add_to(world_map)
         world_map.save(output)
-        log_green(f'finish !! loss: {self.loss}')
+        logger.info(f'finish !! all distance: {self.loss}', color=["BOLD", "GREEN"])
 
 
 
 class TSPModel2(TSPModel):
-    def __init__(self, epsilon, alpha, gamma):
-        df = pd.read_csv("../data/s59h30megacities_utf8.csv", sep="\t")
-        df = df[df["iscapital"] == 1]
-        df["capital_en"] = df["capital_en"].replace(r"\s", "_", regex=True)
-        ndf = np.append(np.random.permutation(df["capital_en"].unique())[:8], "Tokyo") # 都市を限定する
-        df = df[df["capital_en"].isin(ndf)] # 10都市だけ
+    def __init__(self, epsilon: float, alpha: float, gamma: float, file_csv: str="../data/s59h30megacities_utf8.csv", n_capital: int=10):
+        # まずは Base class で初期化して, df を load
+        TSPModelBase.__init__(self, file_csv=file_csv, n_capital=n_capital)
 
-        self.df = df.copy()
+        # Action の定義
+        self.list_action = np.random.permutation(self.df["capital_en"].unique())
 
-        # action は ある都市に行く行為なので、全ての都市の名前を入れる
-        self.list_action = np.random.permutation(df["capital_en"].unique())
-        # Q table の作成
-        ## state は 過去に行った都市も考慮する
-        list_state = []
+        # State の定義
+        self.state_mng = StateManager()
+        self.state_mng.set_state("country", state_type="list", state_list=self.list_action)
         for x in self.list_action:
-            for i in np.arange(2**len(self.list_action)):
-                list_state.append(tuple([x] + [int(xx) for xx in bin(i).replace("0b","").zfill(len(self.list_action))]))
-        self.qtable = QTable(list_state, self.list_action, alpha=alpha, gamma=gamma)
+            ## 国の滞在履歴を状態に組み込む
+            self.state_mng.set_state(x, state_type="binary", state_list=None)
 
-        # init 内で初期化する値. 敢えてNone
-        self.list_action_flg = None
-        self.state           = None
-        self.is_finish       = False
-        self.loss            = None
-        self.step            = None
-
-        # ハイパーパラメータ
-        self.epsilon = epsilon # greedy 行動の閾値
-
-        # 初期化
-        self.init()
+        # QTable の定義
+        qtable = QTable(state_list=self.state_mng.pattern(), action_list=self.list_action, alpha=alpha, gamma=gamma)
+        QLearn.__init__(self, qtable=qtable, epsilon=epsilon)
 
 
-    def init(self):
+    def initialize(self):
         """
         episode単位の初期化
         """
-        log_green("Initialize")
-        initcp = np.random.permutation(self.list_action)[0]
-        self.loss  = 0
-        self.step  = 0
-        self.state = [initcp] + [0 for x in self.list_action]
-        self.is_finish = False
-        self.list_action_flg = np.ones_like(self.list_action).astype(bool)
-        self.transition(initcp) # 初期値は東京
+        init_action = np.random.permutation(self.list_action)[0]
+        init_state  = tuple([init_action] +  [0 for _ in self.list_action])
+        self.state_now    = init_state
+        self.state_prev   = init_state
+        self.action_prev  = init_action
+        self.reward_prev  = 0
+        self.prob_actions = np.ones_like(self.list_action).astype(bool)
+
+        self.country_prev = init_action
+        self.country_now  = init_action
+        self.loss         = 0
+        self.transition(action=self.action_prev)
 
 
-    def reward(self, action: str):
+    def state(self, state_prev: object=None, action_prev: object=None) -> object:
         """
-        あるstateでactionした時に得られる報酬と行動の結果を定義
-        ここでは移動した距離の合計を損失という形の報酬で与える
+        state_prev と action_prev から決まる state を返却する
         """
-        distance = -1 * self.distance(self.state_prev[0], action)
-        self.loss  += distance
-        return self.loss if self.is_finish else distance
+        state_prev  = self.state_prev  if state_prev  is None else state_prev 
+        action_prev = self.action_prev if action_prev is None else action_prev
+        statewk    = list(state_prev)
+        statewk[0] = action_prev
+        statewk[np.where(self.list_action == action_prev)[0].min() + 1] = 1
+        return tuple(statewk)
 
 
-    def transition(self, action: str):
+    def reward(self, state_prev: object=None, action_prev: object=None) -> object:
         """
-        action の結果得られる情報の更新を行う
+        state_prev と action_prev から決まる reward を返却する
         """
-        self.step += 1
-        # 距離の合計を計算する
-        self.action_prev = action
-        self.state_prev  = self.state # tuple は copyできない
-        self.state = list(self.state)
-        self.state[0] = action # 現在の地点をaction地点に
-        self.state[np.where(self.list_action == action)[0].min() + 1] = 1 # 過去に訪問した都市は訪問済みのステータスに変更する
-        self.state = tuple(self.state)
-        self.list_action_flg[np.argmax(self.list_action == action)] = False #一度訪問した箇所はFalseに
-        # もし、全ての都市を訪問し終えたら完了フラグを立てる
-        if (self.list_action_flg == True).sum() == 0:
-            self.is_finish = True
-
-
-    def play(self, output: str="result.html"):
-        """
-        学習した結果のplay
-        """
-        world_map = folium.Map() # 世界地図の作成
-        epsilon = self.epsilon
-        self.epsilon = 0.0 # play 時は randmo な行動をなくす
-        self.init()
-        lat_s, lon_s = self.get_lat_lon(self.state[0])
-        folium.Marker(location=[lat_s, lon_s], popup=self.state[0]).add_to(world_map)
-        while self.is_finish == False:
-            action = self.action()
-            self.transition(action)
-            lat_s, lon_s = self.get_lat_lon(self.state_prev[0])
-            lat_e, lon_e = self.get_lat_lon(self.state[0])
-            dist = self.distance(self.state_prev[0], self.state[0])
-            folium.Marker(location=[lat_e, lon_e], popup=folium.Popup(html=str(self.step), max_width="50%", show=True), tooltip=action).add_to(world_map)
-            folium.PolyLine(locations=[[lat_s, lon_s], [lat_e, lon_e]], popup=folium.Popup(html=str(round(dist, 3)), max_width="50%", show=True), weight=1).add_to(world_map)
-            log_blue(f'state: {self.state}, action: {action}')
-        self.epsilon = epsilon
-        world_map.save(output)
-        log_green(f'finish !! loss: {self.loss}')
+        state_prev  = self.state_prev  if state_prev  is None else state_prev 
+        action_prev = self.action_prev if action_prev is None else action_prev 
+        dist = self.distance(state_prev[0], action_prev)
+        self.loss += dist
+        return -1 * dist
 
 
 
 class TSPModel3(TSPModel):
-    """
-    巡回セールスマン問題に対する強化学習モデルのクラス
-    全ての都市を訪問するまでの総合距離を最小化するアプローチを取る
-    """
-    def __init__(self, epsilon, alpha, gamma):
-        df = pd.read_csv("../data/s59h30megacities_utf8.csv", sep="\t")
-        df = df[df["iscapital"] == 1]
-        df["capital_en"] = df["capital_en"].replace(r"\s", "_", regex=True)
+    def __init__(self, epsilon: float, alpha: float, gamma: float, file_csv: str="../data/s59h30megacities_utf8.csv", n_capital: int=None):
+        # まずは Base class で初期化して, df を load
+        TSPModelBase.__init__(self, file_csv=file_csv, n_capital=n_capital)
 
-        self.df = df.copy()
+        # Action の定義
+        self.list_action = np.random.permutation(self.df["capital_en"].unique())
 
-        # action は ある都市に行く行為なので、全ての都市の名前を入れる
-        self.list_action = np.random.permutation(df["capital_en"].unique())
-        # Q table の作成
+        # State の定義
+        self.state_mng = StateManager()
+        self.state_mng.set_state("country", state_type="onehot", state_list=self.list_action)
+
+        # DQN の定義
         torch_nn = TorchNN(len(self.list_action), 
-            Layer("fc1",   torch.nn.Linear, 128,  (), {}),
-            Layer("relu1", torch.nn.ReLU,   None,  (), {}),
-            Layer("fc2",   torch.nn.Linear, 128,  (), {}),
-            Layer("relu2", torch.nn.ReLU,   None,  (), {}),
-            Layer("fc3",   torch.nn.Linear, len(self.list_action),  (), {}),
+            Layer("fc1",   torch.nn.Linear, 128,  None, (), {}),
+            Layer("relu1", torch.nn.ReLU,   None, None, (), {}),
+            Layer("fc2",   torch.nn.Linear, 128,  None, (), {}),
+            Layer("relu2", torch.nn.ReLU,   None, None, (), {}),
+            Layer("fc3",   torch.nn.Linear, len(self.list_action), None, (), {}),
         )
-        self.qtable = DQN(torch_nn, self.list_action, self.list_action, alpha=alpha, gamma=gamma)
+        qtable = DQN(torch_nn, self.list_action, alpha=alpha, gamma=gamma, batch_size=128, capacity=1000)
+        QLearn.__init__(self, qtable=qtable, epsilon=epsilon)
 
-        # init 内で初期化する値. 敢えてNone
-        self.list_action_flg = None
-        self.state           = None
-        self.state_prev      = None
-        self.action_prev     = None
-        self.is_finish       = False
-        self.loss            = None
-        self.step            = None
 
-        # ハイパーパラメータ
-        self.epsilon = epsilon # greedy 行動の閾値
+    def initialize(self):
+        """
+        episode単位の初期化
+        """
+        self.action_prev  = "Tokyo"
+        self.state_now    = self.state_mng.conv([self.action_prev])
+        self.state_prev   = self.state_now
+        self.reward_prev  = 0
+        self.prob_actions = np.ones_like(self.list_action).astype(bool)
 
-        # 初期化
-        self.init()
+        self.country_prev = self.action_prev
+        self.country_now  = self.action_prev
+        self.loss         = 0
+        self.transition(action=self.action_prev)
+
+
+    def state(self, state_prev: object=None, action_prev: object=None) -> object:
+        """
+        state_prev と action_prev から決まる state を返却する
+        """
+        action_prev = self.action_prev if action_prev is None else action_prev
+        return self.state_mng.conv([action_prev])
+
+
+    def reward(self, state_prev: object=None, action_prev: object=None) -> object:
+        """
+        state_prev と action_prev から決まる reward を返却する
+        """
+        state_prev  = self.state_prev  if state_prev  is None else state_prev
+        action_prev = self.action_prev if action_prev is None else action_prev
+        dist = self.distance(self.list_action[state_prev.astype(bool)][0], action_prev)
+        self.loss += dist
+        return -1 * dist
 
 
 
 class TSPModel4(TSPModel):
-    def __init__(self, epsilon, alpha, gamma):
-        df = pd.read_csv("../data/s59h30megacities_utf8.csv", sep="\t")
-        df = df[df["iscapital"] == 1]
-        df["capital_en"] = df["capital_en"].replace(r"\s", "_", regex=True)
-        ndf = np.append(np.random.permutation(df["capital_en"].unique())[:9], "Tokyo") # 都市を限定する
-        df = df[df["capital_en"].isin(ndf)] # 10都市だけ
+    def __init__(self, epsilon: float, alpha: float, gamma: float, file_csv: str="../data/s59h30megacities_utf8.csv", n_capital: int=None):
+        # まずは Base class で初期化して, df を load
+        TSPModelBase.__init__(self, file_csv=file_csv, n_capital=n_capital)
 
-        self.df = df.copy()
+        # Action の定義
+        self.list_action = np.random.permutation(self.df["capital_en"].unique())
 
-        # action は ある都市に行く行為なので、全ての都市の名前を入れる
-        self.list_action = np.random.permutation(df["capital_en"].unique())
-        # Q table の作成
-        torch_nn = TorchNN(len(self.list_action), 
-            Layer("lstm",  torch.nn.LSTM,   128,  (), {}),
-            Layer("relu1", torch.nn.ReLU,   None,  (), {}),
-            Layer("fc2",   torch.nn.Linear, 128,  (), {}),
-            Layer("relu2", torch.nn.ReLU,   None,  (), {}),
-            Layer("fc3",   torch.nn.Linear, len(self.list_action),  (), {}),
+        # State の定義
+        self.state_mng = StateManager()
+        self.state_mng.set_state("country", state_type="onehot", state_list=self.list_action)
+        for x in self.list_action:
+            ## 国の滞在履歴を状態に組み込む
+            self.state_mng.set_state(x, state_type="binary", state_list=None)
+
+        # DQN の定義
+        torch_nn = TorchNN(len(self.state_mng), 
+            Layer("lstm",  torch.nn.LSTM,   128,  "rnn_all", (), {}),
+            Layer("relu1", torch.nn.ReLU,   None, None,      (), {}),
+            Layer("fc2",   torch.nn.Linear, 128,  None,      (), {}),
+            Layer("relu2", torch.nn.ReLU,   None, None,      (), {}),
+            Layer("fc3",   torch.nn.Linear, len(self.list_action), None, (), {}),
         )
-        self.qtable = DQN(torch_nn, self.list_action, self.list_action, alpha=alpha, gamma=gamma)
+        qtable = DQN(torch_nn, self.list_action, alpha=alpha, gamma=gamma, batch_size=64, capacity=500, unit_memory="episode")
+        QLearn.__init__(self, qtable=qtable, epsilon=epsilon)
 
-        # init 内で初期化する値. 敢えてNone
-        self.list_action_flg = None
-        self.state           = None
-        self.state_prev      = None
-        self.action_prev     = None
-        self.is_finish       = False
-        self.loss            = None
-        self.step            = None
+        # 報酬変動型を用意する
+        self.loss_max = None
 
-        # ハイパーパラメータ
-        self.epsilon = epsilon # greedy 行動の閾値
 
-        # 初期化
-        self.init()
+    def initialize(self):
+        """
+        episode単位の初期化
+        """
+        init_action       = self.list_action[0]
+        self.action_prev  = init_action
+        self.state_now    = self.state_mng.conv([self.action_prev] + [True for _ in self.list_action])
+        self.state_prev   = self.state_now
+        self.reward_prev  = 0
+        self.prob_actions = np.ones_like(self.list_action).astype(bool)
 
+        self.country_prev = self.action_prev
+        self.country_now  = self.action_prev
+        self.loss         = 0
+        self.transition(action=self.action_prev)
+
+
+    def state(self, state_prev: object=None, action_prev: object=None) -> object:
+        """
+        state_prev と action_prev から決まる state を返却する
+        """
+        action_prev = self.action_prev if action_prev is None else action_prev
+        return self.state_mng.conv([action_prev] + self.prob_actions.tolist())
+
+
+    def reward(self, state_prev: object=None, action_prev: object=None) -> object:
+        """
+        state_prev と action_prev から決まる reward を返却する
+        """
+        state_prev  = self.state_prev  if state_prev  is None else state_prev
+        action_prev = self.action_prev if action_prev is None else action_prev
+        dist = self.distance(self.list_action[state_prev[:len(self.list_action)].astype(bool)][0], action_prev)
+        self.loss += dist
+        r = 0
+        if self.is_finish():
+            if self.loss_max is None:
+                self.loss_max = self.loss
+            else:
+                if self.loss_max > self.loss:
+                    # 距離が短かったら更新する
+                    self.loss_max = self.loss
+            r = (self.loss_max / self.loss)
+            if   r > 0.99: r = 10
+            elif r > 0.9:  r = 3
+            elif r > 0.8:  r = 1
+            else:          r = -1
+        return r if self.is_finish() else 0
+
+
+    def play(self, output: str="result.html"):
+        super().play(output=output)
+        logger.info(f"loss_max: {self.loss_max}")
