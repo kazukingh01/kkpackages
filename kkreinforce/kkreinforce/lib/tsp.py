@@ -85,7 +85,7 @@ class TSPModelBase(object):
             df = self.df
             se1 = df[df["capital_en"] == city1].iloc[0]
             se2 = df[df["capital_en"] == city2].iloc[0]
-            val = cal_rho(se1["lon"], se1["lat"], se2["lon"], se2["lat"]) / 10000.
+            val = cal_rho(se1["lon"], se1["lat"], se2["lon"], se2["lat"]) / 1000.
         return val
     
     def get_lat_lon(self, city: str) -> (float, float, ):
@@ -152,7 +152,7 @@ class TSPModel(TSPModelBase, QLearn):
         state_prev  = self.state_prev  if state_prev  is None else state_prev 
         action_prev = self.action_prev if action_prev is None else action_prev 
         dist = self.distance(state_prev, action_prev)
-        self.loss += dist
+        if self.is_eval: self.loss += dist
         return -1 * dist
 
 
@@ -174,16 +174,22 @@ class TSPModel(TSPModelBase, QLearn):
 
     """ ※ここから独自関数※ """
 
-    def play(self, output: str="result.html"):
+    def play(self, output: str="result.html", set_actions: List[object] = None):
         """
         学習した結果のplay
         """
         world_map = folium.Map() # 世界地図の作成
         self.init()
+        self.is_eval = True
         lat_s, lon_s = self.get_lat_lon(self.country_now)
         folium.Marker(location=[lat_s, lon_s], popup=self.country_now).add_to(world_map)
+        i = 0
         while self.is_finish() == False:
-            action = self.action_best()
+            if set_actions is not None:
+                action = set_actions[i]
+                i += 1
+            else:
+                action = self.action_best()
             dist   = self.distance(self.country_now, action)
             lat_s, lon_s = self.get_lat_lon(self.country_now)
             lat_e, lon_e = self.get_lat_lon(action)
@@ -264,7 +270,7 @@ class TSPModel2(TSPModel):
         state_prev  = self.state_prev  if state_prev  is None else state_prev 
         action_prev = self.action_prev if action_prev is None else action_prev 
         dist = self.distance(state_prev[0], action_prev)
-        self.loss += dist
+        if self.is_eval: self.loss += dist
         return -1 * dist
 
 
@@ -283,14 +289,20 @@ class TSPModel3(TSPModel):
 
         # DQN の定義
         torch_nn = TorchNN(len(self.list_action), 
-            Layer("fc1",   torch.nn.Linear, 128,  None, (), {}),
-            Layer("relu1", torch.nn.ReLU,   None, None, (), {}),
-            Layer("fc2",   torch.nn.Linear, 128,  None, (), {}),
-            Layer("relu2", torch.nn.ReLU,   None, None, (), {}),
-            Layer("fc3",   torch.nn.Linear, len(self.list_action), None, (), {}),
+            Layer("fc1",   torch.nn.Linear,      128,  None, (), {}),
+            Layer("norm1", torch.nn.BatchNorm1d, 0,    None, (), {}),
+            Layer("relu1", torch.nn.ReLU,        None, None, (), {}),
+            Layer("fc2",   torch.nn.Linear,      128,  None, (), {}),
+            Layer("norm2", torch.nn.BatchNorm1d, 0,    None, (), {}),
+            Layer("relu2", torch.nn.ReLU,        None, None, (), {}),
+            Layer("fc3",   torch.nn.Linear,      len(self.list_action), None, (), {}),
         )
         qtable = DQN(torch_nn, self.list_action, alpha=alpha, gamma=gamma, batch_size=128, capacity=1000)
         QLearn.__init__(self, qtable=qtable, epsilon=epsilon)
+
+        # 巡回できるようにするためのパラメータ
+        self.is_back = False
+        self.first_country = self.action_prev
 
 
     def initialize(self):
@@ -308,6 +320,19 @@ class TSPModel3(TSPModel):
         self.loss         = 0
         self.transition(action=self.action_prev)
 
+        self.is_back = False
+        self.first_country = self.action_prev
+        self.df.to_csv("now_setting.csv")
+
+
+    def is_finish(self) -> bool:
+        if self.is_back and (self.prob_actions == True).sum() == 0:
+            return True
+        if (self.prob_actions == True).sum() == 0:
+            self.is_back = True
+            self.prob_actions[self.list_action == self.first_country] = True # 最初の国を行けるようにする
+        return False
+
 
     def state(self, state_prev: object=None, action_prev: object=None) -> object:
         """
@@ -323,13 +348,13 @@ class TSPModel3(TSPModel):
         """
         state_prev  = self.state_prev  if state_prev  is None else state_prev
         action_prev = self.action_prev if action_prev is None else action_prev
-        dist = self.distance(self.list_action[state_prev.astype(bool)][0], action_prev)
-        self.loss += dist
+        dist = self.distance(self.list_action[state_prev[:len(self.list_action)].astype(bool)][0], action_prev)
+        if self.is_eval: self.loss += dist
         return -1 * dist
 
 
 
-class TSPModel4(TSPModel):
+class TSPModel4(TSPModel3):
     def __init__(self, epsilon: float, alpha: float, gamma: float, file_csv: str="../data/s59h30megacities_utf8.csv", n_capital: int=None):
         # まずは Base class で初期化して, df を load
         TSPModelBase.__init__(self, file_csv=file_csv, n_capital=n_capital)
@@ -342,21 +367,30 @@ class TSPModel4(TSPModel):
         self.state_mng.set_state("country", state_type="onehot", state_list=self.list_action)
         for x in self.list_action:
             ## 国の滞在履歴を状態に組み込む
-            self.state_mng.set_state(x, state_type="binary", state_list=None)
+            self.state_mng.set_state(x, state_type="numeric", state_list=None)
 
         # DQN の定義
         torch_nn = TorchNN(len(self.state_mng), 
-            Layer("lstm",  torch.nn.LSTM,   128,  "rnn_all", (), {}),
-            Layer("relu1", torch.nn.ReLU,   None, None,      (), {}),
-            Layer("fc2",   torch.nn.Linear, 128,  None,      (), {}),
-            Layer("relu2", torch.nn.ReLU,   None, None,      (), {}),
-            Layer("fc3",   torch.nn.Linear, len(self.list_action), None, (), {}),
+            Layer("fc1",   torch.nn.Linear,      128,  None, (), {}),
+            Layer("norm1", torch.nn.BatchNorm1d, 0,    None, (), {}),
+            Layer("relu1", torch.nn.ReLU,        None, None, (), {}),
+            Layer("fc2",   torch.nn.Linear,      256,  None, (), {}),
+            Layer("norm2", torch.nn.BatchNorm1d, 0,    None, (), {}),
+            Layer("relu2", torch.nn.ReLU,        None, None, (), {}),
+            Layer("fc3",   torch.nn.Linear,      128,  None, (), {}),
+            Layer("norm3", torch.nn.BatchNorm1d, 0,    None, (), {}),
+            Layer("relu3", torch.nn.ReLU,        None, None, (), {}),
+            Layer("fc4",   torch.nn.Linear,      len(self.list_action), None, (), {}),
         )
-        qtable = DQN(torch_nn, self.list_action, alpha=alpha, gamma=gamma, batch_size=64, capacity=500, unit_memory="episode")
+        qtable = DQN(torch_nn, self.list_action, alpha=alpha, gamma=gamma, batch_size=128, capacity=1000)
         QLearn.__init__(self, qtable=qtable, epsilon=epsilon)
 
-        # 報酬変動型を用意する
-        self.loss_max = None
+        # 状態の追加
+        self.action_hist_sum = None
+
+        # 巡回できるようにするためのパラメータ
+        self.is_back = False
+        self.first_country = self.action_prev
 
 
     def initialize(self):
@@ -365,6 +399,7 @@ class TSPModel4(TSPModel):
         """
         init_action       = self.list_action[0]
         self.action_prev  = init_action
+        self.action_hist_sum = np.zeros_like(self.list_action).astype(float)
         self.state_now    = self.state_mng.conv([self.action_prev] + [True for _ in self.list_action])
         self.state_prev   = self.state_now
         self.reward_prev  = 0
@@ -375,13 +410,18 @@ class TSPModel4(TSPModel):
         self.loss         = 0
         self.transition(action=self.action_prev)
 
+        self.is_back = False
+        self.first_country = self.action_prev
+        self.df.to_csv("now_setting.csv")        
+
 
     def state(self, state_prev: object=None, action_prev: object=None) -> object:
         """
         state_prev と action_prev から決まる state を返却する
         """
         action_prev = self.action_prev if action_prev is None else action_prev
-        return self.state_mng.conv([action_prev] + self.prob_actions.tolist())
+        _state = self.state_mng.conv([action_prev] + self.action_hist_sum.tolist())
+        return _state
 
 
     def reward(self, state_prev: object=None, action_prev: object=None) -> object:
@@ -392,22 +432,108 @@ class TSPModel4(TSPModel):
         action_prev = self.action_prev if action_prev is None else action_prev
         dist = self.distance(self.list_action[state_prev[:len(self.list_action)].astype(bool)][0], action_prev)
         self.loss += dist
-        r = 0
-        if self.is_finish():
+        return -1 * self.loss / 10 if self.is_finish() else 0
+    
+
+    def transition_middle(self):
+        super().transition_middle()
+        self.action_hist_sum = self.action_hist_sum + (self.prob_actions == False).astype(float) # 行った国の履歴はどんどん足し上げる. 数字が大きいほど過去に行ったことを表現
+
+
+
+class TSPModel5(TSPModel4):
+    def __init__(self, epsilon: float, alpha: float, gamma: float, file_csv: str="../data/s59h30megacities_utf8.csv", n_capital: int=None):
+        # まずは Base class で初期化して, df を load
+        TSPModelBase.__init__(self, file_csv=file_csv, n_capital=n_capital)
+
+        # Action の定義
+        self.list_action = np.random.permutation(self.df["capital_en"].unique())
+
+        # State の定義
+        self.state_mng = StateManager()
+        self.state_mng.set_state("country", state_type="onehot", state_list=self.list_action)
+        for x in self.list_action:
+            ## 国の滞在履歴を状態に組み込む
+            self.state_mng.set_state(x, state_type="numeric", state_list=None)
+
+        # DQN の定義
+        torch_nn = TorchNN(len(self.state_mng), 
+            Layer("lstm",  torch.nn.LSTM,        128,  "rnn_all", (), {}),
+            Layer("norm1", torch.nn.BatchNorm1d, 0,    None,      (), {}),
+            Layer("relu1", torch.nn.ReLU,        None, None,      (), {}),
+            Layer("fc2",   torch.nn.Linear,      128,  None,      (), {}),
+            Layer("norm2", torch.nn.BatchNorm1d, 0,    None,      (), {}),
+            Layer("relu2", torch.nn.ReLU,        None, None,      (), {}),
+            Layer("fc3",   torch.nn.Linear,      64,   None,      (), {}),
+            Layer("norm3", torch.nn.BatchNorm1d, 0,    None,      (), {}),
+            Layer("relu3", torch.nn.ReLU,        None, None,      (), {}),
+            Layer("fc4",   torch.nn.Linear,      len(self.list_action), None, (), {}),
+        )
+        qtable = DQN(torch_nn, self.list_action, alpha=alpha, gamma=gamma, batch_size=5, capacity=5, unit_memory="episode", lr=0.001)
+        QLearn.__init__(self, qtable=qtable, epsilon=epsilon)
+
+        # 状態の追加
+        self.action_hist_sum = None
+        self.state_history = []
+
+        # 巡回できるようにするためのパラメータ
+        self.is_back = False
+        self.first_country = self.action_prev
+
+
+    def initialize(self):
+        self.state_history = []
+        super().initialize()
+
+
+    def state(self, state_prev: object=None, action_prev: object=None) -> object:
+        _state = super().state()
+        self.state_history.append(_state)
+        return _state
+
+
+    def action_best(self) -> object:
+        """
+        state_now から決定される最適 action を返却する
+        ※ここでは state_now を含む state_history を使用する
+        """
+        _, action = self.qtable.get_max(np.array(self.state_history), prob_actions=self.prob_actions)
+        return action
+
+
+
+class TSPModel6(TSPModel5):
+    def __init__(self, epsilon: float, alpha: float, gamma: float, file_csv: str="../data/s59h30megacities_utf8.csv", n_capital: int=None):
+        super().__init__(epsilon=epsilon, alpha=alpha, gamma=gamma, file_csv=file_csv, n_capital=n_capital)
+        self.loss_max = None
+
+    def reward(self, state_prev: object=None, action_prev: object=None) -> object:
+        #state_prev と action_prev から決まる reward を返却する
+        state_prev  = self.state_prev  if state_prev  is None else state_prev
+        action_prev = self.action_prev if action_prev is None else action_prev
+        dist = self.distance(self.list_action[state_prev[:len(self.list_action)].astype(bool)][0], action_prev)
+        self.loss += dist
+        dist = 1./dist if dist > 0 else 0
+        r = None
+        if self.is_finish() and self.is_eval == False:
             if self.loss_max is None:
                 self.loss_max = self.loss
             else:
-                if self.loss_max > self.loss:
+                if self.loss_max >= self.loss:
                     # 距離が短かったら更新する
                     self.loss_max = self.loss
             r = (self.loss_max / self.loss)
             if   r > 0.99: r = 10
-            elif r > 0.9:  r = 3
-            elif r > 0.8:  r = 1
-            else:          r = -1
+            elif r > 0.9:  r = 5
+            elif r > 0.8:  r = 2
+            else:          r = 0
         return r if self.is_finish() else 0
 
-
     def play(self, output: str="result.html"):
-        super().play(output=output)
+        best_actions = None
+        super().play(output=output, set_actions=None)
+        if len(self.qtable.memory.memory) > 0:
+            _, best_actions, _, _, _ = self.qtable.memory.sample(indexes=[0])
+            best_actions = best_actions.reshape(-1)
+        super().play(output=output+".best.html", set_actions=best_actions)
         logger.info(f"loss_max: {self.loss_max}")

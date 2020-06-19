@@ -30,8 +30,10 @@ class TorchNN(nn.Module):
         self.indexes = [None] # 0 番目は None で埋めておく
         for layer in layers:
             self.indexes.append(layer.calc_type)
-            if layer.node is None:
+            if   layer.node is None:
                 self.add_module(layer.name, layer.module(*layer.params, **layer.kwards))
+            elif layer.node == 0:
+                self.add_module(layer.name, layer.module(in_size, *layer.params, **layer.kwards))
             else:
                 self.add_module(layer.name, layer.module(in_size, layer.node, *layer.params, **layer.kwards))
                 in_size = layer.node
@@ -49,9 +51,11 @@ class TorchNN(nn.Module):
             elif self.indexes[i] == "rnn_all":
                 output = module(output)
                 output = output[0]
-                if option is not None and option == "not_first":
+                if   option is not None and option == "not_first":
                     output = output[:, 1:, :]
-                output = output.reshape(-1, output[0].shape[-1])
+                elif option is not None and option == "last":
+                    output = output[:, -1, :]
+                output = output.reshape(-1, output.shape[-1])
             else:
                 output = module(output)
         return output
@@ -63,7 +67,7 @@ class DQN(object):
         torch_nn: TorchNN, 
         action_list: List[object], 
         alpha: float, gamma: float, batch_size: int, 
-        capacity: int, unit_memory: str=None
+        capacity: int, unit_memory: str=None, lr: float=0.001
     ):
         if capacity < batch_size: raise Exception("capacity is less than batch_size. ")
         super().__init__()
@@ -78,14 +82,14 @@ class DQN(object):
         ## Q Network
         self.qnet = torch_nn
         ## optimizer
-        self.optimizer = torch.optim.SGD(self.qnet.parameters(), lr=0.001, momentum=0.9, weight_decay=0)
+        self.optimizer = torch.optim.RMSprop(self.qnet.parameters(), lr=lr, weight_decay=0)
         ## loss function
         self.criterion = nn.SmoothL1Loss(reduction="sum")
         ## Freezing the target network
         self.qnet_freez = copy.deepcopy(self.qnet)
         self.qnet_freez.load_state_dict(self.qnet.state_dict().copy())
         self.synchronize_cnt = 0
-        self.synchronize_max = 10
+        self.synchronize_max = 2
         
         # Train config
         self.batch_size = batch_size
@@ -132,7 +136,8 @@ class DQN(object):
     def get_max(self, state: np.ndarray, prob_actions: np.ndarray = None):
         self.qnet.eval()
         with torch.no_grad():
-            tens = self.qnet(torch.from_numpy(state.reshape(*((1,1,) if 'rnn_all' in self.qnet.indexes else (1,)), -1).astype(np.float32)))
+            state = torch.from_numpy(state.astype(np.float32).reshape(1, *state.shape)) # 次元を1つ上げる
+            tens = self.qnet(state, option=("last" if self.memory.unit_memory == "episode" else None))
             ndf  = tens.detach().numpy()[-1]
             if prob_actions is not None:
                 prob_actions_wk = prob_actions.copy().astype(float)
@@ -153,7 +158,8 @@ class DQN(object):
         self.memory.push(state, action, reward, state_next, prob_actions, on_episode=on_episode)
         if len(self.memory) < self.batch_size: return None
 
-        # episode 単位で保存されている場合は、List[List[state]] になっている
+        if self.memory.unit_memory == "episode" and on_episode == True: return None # episode の場合は 1episode で 1回学習させる
+        # episode 単位で保存されている場合は、ndarray[[state], [state], ..] になっている
         state, action, reward, state_next, prob_actions = self.memory.sample(self.batch_size)
 
         self.qnet.train() # train() と eval() は Dropout があるときに区別する必要がある
@@ -197,11 +203,13 @@ class ReplayMemory(object):
 
     def __init__(self, capacity: int, unit_memory: str=None):
         super(ReplayMemory, self).__init__()
-        self.capacity = capacity
+        self.capacity = capacity + 1 # best episode 用に追加
         self.memory   = []
         self.position = 0
         self.memory_in_episode = []
         self.unit_memory = unit_memory
+        self.reward_max  = -np.inf
+        self.trans_best  = None
 
     def push(self, *args, on_episode=False):
         """
@@ -218,18 +226,31 @@ class ReplayMemory(object):
             if on_episode == False:
                 if len(self.memory) < self.capacity:
                     self.memory.append(None)
+                # Best episode は 消さないようにしたい
+                if self.reward_max <= self.memory_in_episode[-1].reward:
+                    self.reward_max = self.memory_in_episode[-1].reward
+                    self.memory[0]  = self.memory_in_episode.copy()
                 self.memory[self.position] = self.memory_in_episode.copy()
                 self.position = (self.position + 1) % self.capacity
+                if self.position == 0: self.position += 1 # 0 index は特別なのでずらす
                 self.memory_in_episode = []
         else:
             raise Exception(f"We don't consider this unit: {self.unit_memory}")
 
-    def sample(self, batch_size) -> (List[object], List[object], List[object], List[object], List[object]):
-        transitions = random.sample(self.memory, batch_size)
+    def sample(self, batch_size: int=1, indexes: List[int] = None) -> (List[object], List[object], List[object], List[object], List[object]):
+        # indexes が指定されたらそっちを優先する
+        transitions = None
+        if indexes is None:
+            transitions = random.sample(self.memory, batch_size)
+        else:
+            transitions = []
+            for x in indexes: transitions.append(self.memory[x])
         if self.unit_memory is None:
             batch = Transition(*zip(* transitions))
             return np.array(batch.state), np.array(batch.action), np.array(batch.reward), np.array(batch.state_next), np.array(batch.prob_actions)
         elif self.unit_memory == "episode":
+            # best episode を強制追加
+            #transitions.append(self.memory[0])
             state        = np.array([[x.state        for x in episode] for episode in transitions])
             action       = np.array([[x.action       for x in episode] for episode in transitions])
             reward       = np.array([[x.reward       for x in episode] for episode in transitions])

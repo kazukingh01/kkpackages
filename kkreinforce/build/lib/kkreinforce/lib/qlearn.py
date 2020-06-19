@@ -89,8 +89,10 @@ class QLearn(object):
         self.action_prev  = None
         self.reward_prev  = None
         self.prob_actions = None
-        self.step         = None
+        self.step         = 0
+        self.episode      = 0
         self.epsilon      = epsilon
+        self.is_eval      = False # 学習外ではこのフラグで状態の更新などを制御する
     
     def initialize(self):
         """
@@ -101,6 +103,7 @@ class QLearn(object):
     def init(self):
         """ オーバーライドしない """
         logger.info("Initialize", color=["BOLD", "GREEN"])
+        self.is_eval = False
         self.step = 0
         self.initialize()
 
@@ -178,12 +181,12 @@ class QLearn(object):
         学習する
         """
         for i in range(n_episode):
-            logger.info(f"episode: {i}", color=["BOLD", "BLUE"])
+            logger.info(f"episode: {self.episode}", color=["BOLD", "BLUE"])
             self.init()
             while self.is_finish() == False:
                 self.transition()
                 self.q_update()
-
+            self.episode += 1
 
 
 class StateManager(object):
