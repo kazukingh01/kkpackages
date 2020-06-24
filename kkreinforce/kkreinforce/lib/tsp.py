@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import folium
 import torch
+import cv2
 pd.options.display.max_rows = 100
 
 # local package
@@ -65,6 +66,56 @@ class DivIcon(MacroElement):
             """)
 
 
+class WorldMap(object):
+    """
+    WorldMap を緯度と経度から描画して、それに対して線を引いたりする
+    """
+    def __init__(self, df: pd.DataFrame):
+        self.df = df.copy()
+        self.df["lat"] = (-1 * (self.df["lat"] - 90.0 ) / 0.5).astype(int)
+        self.df["lon"] = (     (self.df["lon"] + 180.0) / 0.5).astype(int)
+    
+    def initialize(self) -> np.ndarray:
+        img = np.zeros((180*2,360*2, 3)).astype(np.uint8)
+        return self.drawcities(img)
+    
+    def drawcities(self, img: np.ndarray):
+        img = img.copy()
+        for lat, lon in self.df[["lat", "lon"]].values:
+            img[lat, lon, :] = (255, 0, 0)
+        return img
+    
+    def drawlocation(self, img: np.ndarray, city: str, value: (int, int, int)) -> np.ndarray:
+        img = img.copy()
+        lat, lon = self.df[self.df["capital_en"] == city].iloc[0][["lat", "lon"]].values
+        img[lat, lon, :] = value
+        return img
+    
+    def drawline(self, img: np.ndarray, city_from: str, city_to: str) -> np.ndarray:
+        img = img.copy()
+        lat_from, lon_from = self.df[self.df["capital_en"] == city_from].iloc[0][["lat", "lon"]].values
+        lat_to,   lon_to   = self.df[self.df["capital_en"] == city_to  ].iloc[0][["lat", "lon"]].values
+        # point は x, y で入力しないといけないので、img の順番と逆にする必要がある
+        img = cv2.line(img, (int(lon_from), int(lat_from)), (int(lon_to), int(lat_to)), (0,255,0), 1)
+        return img
+
+    def list_capital(self) -> List[str]:
+        return self.df["capital_en"].tolist()
+    
+    @classmethod
+    def conv_to_torch(cls, img: np.ndarray) -> np.ndarray:
+        return np.array([img[:, :, i] for i in range(img.shape[-1])])
+    
+    @classmethod
+    def conv_from_torch(cls, img: np.ndarray) -> np.ndarray:
+        return cv2.flip(np.rot90(img.T, 3), 1)
+    
+    def show(self, img: np.ndarray, ):
+        cv2.imshow("test", img)
+        cv2.waitKey(0)
+
+
+
 class TSPModelBase(object):
     def __init__(self, file_csv: str="../data/s59h30megacities_utf8.csv", n_capital: int=None):
         df = pd.read_csv(file_csv, sep="\t")
@@ -74,6 +125,7 @@ class TSPModelBase(object):
             ndf = np.random.permutation(df["capital_en"].unique())[:n_capital] # 都市を限定する
             df  = df[df["capital_en"].isin(ndf)]
         self.df = df.copy()
+        self.wmp = WorldMap(self.df)
 
     def distance(self, city1: str, city2: str) -> float:
         """
@@ -458,15 +510,18 @@ class TSPModel5(TSPModel4):
 
         # DQN の定義
         torch_nn = TorchNN(len(self.state_mng), 
-            Layer("lstm",  torch.nn.LSTM,        128,  "rnn_all", (), {}),
-            Layer("norm1", torch.nn.BatchNorm1d, 0,    None,      (), {}),
-            Layer("relu1", torch.nn.ReLU,        None, None,      (), {}),
-            Layer("fc2",   torch.nn.Linear,      128,  None,      (), {}),
-            Layer("norm2", torch.nn.BatchNorm1d, 0,    None,      (), {}),
-            Layer("relu2", torch.nn.ReLU,        None, None,      (), {}),
-            Layer("fc3",   torch.nn.Linear,      64,   None,      (), {}),
-            Layer("norm3", torch.nn.BatchNorm1d, 0,    None,      (), {}),
-            Layer("relu3", torch.nn.ReLU,        None, None,      (), {}),
+            Layer("lstm",  torch.nn.LSTM,        128,  None,           (), {}),
+            Layer("calc1", torch.nn.Identity,    None, "rnn_outonly",  (), {}),
+            Layer("calc2", torch.nn.Identity,    None, "call_options", (), {}),
+            Layer("calc3", torch.nn.Identity,    None, "rnn_all",      (), {}),
+            Layer("norm1", torch.nn.BatchNorm1d, 0,    None,           (), {}),
+            Layer("relu1", torch.nn.ReLU,        None, None,           (), {}),
+            Layer("fc2",   torch.nn.Linear,      128,  None,           (), {}),
+            Layer("norm2", torch.nn.BatchNorm1d, 0,    None,           (), {}),
+            Layer("relu2", torch.nn.ReLU,        None, None,           (), {}),
+            Layer("fc3",   torch.nn.Linear,      64,   None,           (), {}),
+            Layer("norm3", torch.nn.BatchNorm1d, 0,    None,           (), {}),
+            Layer("relu3", torch.nn.ReLU,        None, None,           (), {}),
             Layer("fc4",   torch.nn.Linear,      len(self.list_action), None, (), {}),
         )
         qtable = DQN(torch_nn, self.list_action, alpha=alpha, gamma=gamma, batch_size=5, capacity=5, unit_memory="episode", lr=0.001)
@@ -536,4 +591,128 @@ class TSPModel6(TSPModel5):
             _, best_actions, _, _, _ = self.qtable.memory.sample(indexes=[0])
             best_actions = best_actions.reshape(-1)
         super().play(output=output+".best.html", set_actions=best_actions)
+        logger.info(f"loss_max: {self.loss_max}")
+
+
+
+class TSPModel7(TSPModel):
+    def __init__(self, epsilon: float, alpha: float, gamma: float, file_csv: str="../data/s59h30megacities_utf8.csv", n_capital: int=None):
+        # まずは Base class で初期化して, df を load
+        TSPModelBase.__init__(self, file_csv=file_csv, n_capital=n_capital)
+
+        # Action の定義
+        self.list_action = np.random.permutation(self.df["capital_en"].unique())
+
+        # DQN の定義
+        torch_nn = TorchNN(3, 
+            Layer("conv1", torch.nn.Conv2d,      128,     None, (), {"kernel_size":5, "stride":5,}),
+            Layer("relu1", torch.nn.ReLU,        None,    None, (), {}),
+            Layer("pool1", torch.nn.MaxPool2d,   None,    None, (), {"kernel_size":2, "stride":2,}),
+            Layer("conv2", torch.nn.Conv2d,      128,     None, (), {"kernel_size":3, "stride":3,}),
+            Layer("relu2", torch.nn.ReLU,        None,    None, (), {}),
+            Layer("pool2", torch.nn.MaxPool2d,   None,    None, (), {"kernel_size":2, "stride":2,}),
+            Layer("conv3", torch.nn.Conv2d,      256,     None, (), {"kernel_size":2, "stride":2,}),
+            Layer("relu3", torch.nn.ReLU,        None,    None, (), {}),
+            Layer("pool3", torch.nn.MaxPool2d,   None,    None, (), {"kernel_size":3, "stride":3,}),
+            Layer("view6", torch.nn.Identity,    256*1*2, "reshape(x,-1)", (), {}),
+            Layer("fc7",   torch.nn.Linear,      256,  None,           (), {}),
+            Layer("norm7", torch.nn.BatchNorm1d, 0,    None,           (), {}),
+            Layer("relu7", torch.nn.ReLU,        None, None,           (), {}),
+            Layer("fc8",   torch.nn.Linear,      128,  None,           (), {}),
+            Layer("norm8", torch.nn.BatchNorm1d, 0,    None,           (), {}),
+            Layer("relu8", torch.nn.ReLU,        None, None,           (), {}),
+            Layer("fc9",   torch.nn.Linear,      64,  None,           (), {}),
+            Layer("norm9", torch.nn.BatchNorm1d, 0,    None,           (), {}),
+            Layer("relu9", torch.nn.ReLU,        None, None,           (), {}),
+            Layer("output",torch.nn.Linear,      len(self.list_action), None, (), {}),
+        )
+        qtable = DQN(torch_nn, self.list_action, alpha=alpha, gamma=gamma, batch_size=8, capacity=64, unit_memory=None, lr=0.01)
+        qtable.to_cuda() # GPU計算
+        QLearn.__init__(self, qtable=qtable, epsilon=epsilon)
+
+        # 巡回できるようにするためのパラメータ
+        self.is_back = False
+        self.first_country = self.action_prev
+        # 追加パラメータ
+        self.action_pprev = None
+        self.loss_max     = None
+
+
+    def initialize(self):
+        """
+        episode単位の初期化
+        """
+        init_action = self.list_action[0]
+        self.action_prev  = init_action
+        self.action_pprev = self.action_prev
+        self.state_now    = self.wmp.conv_to_torch(self.wmp.initialize()) # 地図を初期化
+        self.state_prev   = self.state_now
+        self.reward_prev  = 0
+        self.prob_actions = np.ones_like(self.list_action).astype(bool)
+
+        self.country_prev = self.action_prev
+        self.country_now  = self.action_prev
+        self.loss         = 0
+        self.transition(action=self.action_prev)
+
+        self.is_back = False
+        self.first_country = self.action_prev
+        self.df.to_csv("now_setting.csv")
+
+
+    def is_finish(self) -> bool:
+        if self.is_back and (self.prob_actions == True).sum() == 0:
+            return True
+        if (self.prob_actions == True).sum() == 0:
+            self.is_back = True
+            self.prob_actions[self.list_action == self.first_country] = True # 最初の国を行けるようにする
+        return False
+
+
+    def transition_before(self):
+        self.action_pprev = self.action_prev
+
+
+    def state(self, state_prev: object=None, action_prev: object=None) -> object:
+        """
+        state_prev と action_prev から決まる state を返却する
+        """
+        action_prev = self.action_prev if action_prev is None else action_prev
+        img = self.state_prev.copy()
+        img = self.wmp.conv_from_torch(img)
+        img = self.wmp.drawline(img, self.action_pprev, action_prev)
+        img = self.wmp.drawcities(img)
+        img = self.wmp.drawlocation(img, self.action_pprev, (255,255,0))
+        img = self.wmp.drawlocation(img, action_prev, (255,255,255))
+        img = self.wmp.conv_to_torch(img)
+        return img
+
+
+    def reward(self, state_prev: object=None, action_prev: object=None) -> object:
+        """
+        state_prev と action_prev から決まる reward を返却する
+        """
+        state_prev  = self.state_prev  if state_prev  is None else state_prev
+        action_prev = self.action_prev if action_prev is None else action_prev
+        dist = self.distance(self.action_pprev, action_prev)
+        self.loss += dist
+        dist = 1./dist if dist > 0 else 0
+        r = None
+        if self.is_finish() and self.is_eval == False:
+            if self.loss_max is None:
+                self.loss_max = self.loss
+            else:
+                if self.loss_max >= self.loss:
+                    # 距離が短かったら更新する
+                    self.loss_max = self.loss
+            r = (self.loss_max / self.loss)
+            if   r > 0.99: r = 10
+            elif r > 0.9:  r = 5
+            elif r > 0.8:  r = 2
+            else:          r = -1
+        return r if self.is_finish() else -1*dist
+
+
+    def play(self, output: str="result.html"):
+        super().play(output=output, set_actions=None)
         logger.info(f"loss_max: {self.loss_max}")

@@ -43,21 +43,24 @@ class TorchNN(nn.Module):
         output = input.clone()
         for i, module in enumerate(self.modules()):
             if i == 0: continue
+            output = module(output)
             if   self.indexes[i] is None:
-                output = module(output)
-            elif self.indexes[i] == "last":
-                output = module(output)
-                output = output[0][:, -1, :]
-            elif self.indexes[i] == "rnn_all":
-                output = module(output)
+                pass
+            elif self.indexes[i] == "reshape(x,-1)":
+                output = output.reshape(output.shape[0], -1)
+            elif self.indexes[i] == "rnn_outonly":
                 output = output[0]
+            elif self.indexes[i] == "rnn_last":
+                output = output[:, -1, :]
+            elif self.indexes[i] == "rnn_all":
+                output = output.reshape(-1, output.shape[-1])
+            elif self.indexes[i] == "call_options":
                 if   option is not None and option == "not_first":
                     output = output[:, 1:, :]
                 elif option is not None and option == "last":
                     output = output[:, -1, :]
-                output = output.reshape(-1, output.shape[-1])
             else:
-                output = module(output)
+                raise Exception(f'calc type: {self.indexes[i]} is not expected.')
         return output
 
 
@@ -95,6 +98,8 @@ class DQN(object):
         self.batch_size = batch_size
         # Replay Memory
         self.memory = ReplayMemory(capacity, unit_memory=unit_memory)
+        # Cuda Flg
+        self.is_cuda = False
 
 
     def to_cuda(self):
@@ -102,8 +107,14 @@ class DQN(object):
         # cudaへのtoは return で変数を上書きしなくても大丈夫
         # moduleがcudaにのっているかどうかは、next(model.parameters()).is_cuda で確認できる
         self.qnet.to(torch.device("cuda:0"))
+        self.qnet_freez.to(torch.device("cuda:0"))
         self.criterion.to(torch.device("cuda:0"))
+        self.is_cuda = True
         logger.info("END")
+
+
+    def val_to(self, x):
+        return x.to("cuda:0") if self.is_cuda else x
 
 
     def conv_onehot(self, value):
@@ -128,17 +139,18 @@ class DQN(object):
         with torch.no_grad():
             tens = self.qnet(state)
             if action is None:
-                return tens.detach().numpy()[0]
+                return tens.detach().to("cpu").numpy()[0]
             else:
-                return tens[:, self.dict_action[action]].detach().numpy()[0]
+                return tens[:, self.dict_action[action]].detach().to("cpu").numpy()[0]
 
 
     def get_max(self, state: np.ndarray, prob_actions: np.ndarray = None):
         self.qnet.eval()
         with torch.no_grad():
             state = torch.from_numpy(state.astype(np.float32).reshape(1, *state.shape)) # 次元を1つ上げる
-            tens = self.qnet(state, option=("last" if self.memory.unit_memory == "episode" else None))
-            ndf  = tens.detach().numpy()[-1]
+            state = self.val_to(state)
+            tens  = self.qnet(state, option=("last" if self.memory.unit_memory == "episode" else None))
+            ndf   = tens.detach().to("cpu").numpy()[-1]
             if prob_actions is not None:
                 prob_actions_wk = prob_actions.copy().astype(float)
                 prob_actions_wk[prob_actions_wk == 0] = np.nan
@@ -165,24 +177,31 @@ class DQN(object):
         self.qnet.train() # train() と eval() は Dropout があるときに区別する必要がある
         self.qnet.zero_grad() # 勾配を初期化
         tens_act  = self.conv_onehot(action)
+        tens_act  = self.val_to(tens_act)
         if len(tens_act.shape) == 1: tens_act = tens_act.reshape(-1, tens_act.shape[-1]) # 1次元は2次元に
         tens_pred = torch.from_numpy(state.astype(np.float32))
+        tens_pred = self.val_to(tens_pred)
         tens_pred = self.qnet(tens_pred)
         tens_pred = tens_pred * tens_act.reshape(-1, tens_pred.shape[-1]) # 3次元になることは想定しない
         with torch.no_grad():
             # Double DQN では行動は学習中のネットワークで決定する. ただ、その行動における価値については、freez NN で決める
             tens_ans  = torch.from_numpy(state_next.astype(np.float32))
-            tens_ans1 = self.qnet(tens_ans, option="not_first")
+            tens_ans  = self.val_to(tens_ans)
+            tens_ans1 = self.qnet(tens_ans, option=("not_first" if self.memory.unit_memory == "episode" else None))
             if (prob_actions == None).sum() == 0:
                 prob_actions_wk = prob_actions.copy().astype(np.float32)
                 prob_actions_wk[prob_actions_wk == 0] = np.nan
-                tens_ans1 = tens_ans1 * torch.from_numpy(prob_actions_wk).reshape(-1, tens_ans1.shape[-1]) # 3次元になることは想定しない
+                prob_actions_wk = torch.from_numpy(prob_actions_wk).reshape(-1, tens_ans1.shape[-1])
+                prob_actions_wk  = self.val_to(prob_actions_wk)
+                tens_ans1 = tens_ans1 * prob_actions_wk # 3次元になることは想定しない
                 tens_ans1[torch.isnan(tens_ans1)] = float("-inf") # nan だと max で nan になるので -inf を埋める
             tens_ans0, tens_ans1 = tens_ans1.max(axis=1) # 最大となるところのindex
-            tens_ans2 = self.qnet_freez(tens_ans, option="not_first")
+            tens_ans2 = self.qnet_freez(tens_ans, option=("not_first" if self.memory.unit_memory == "episode" else None))
             tens_ans2[torch.isinf(tens_ans0), :] = 0
             tens_ans  = tens_ans2[:, tens_ans1][torch.eye(tens_ans1.shape[0]).bool()]
-            tens_max  = torch.tensor(reward.astype(np.float32)).reshape(-1) + self.gamma * tens_ans
+            tens_rwd  = torch.tensor(reward.astype(np.float32)).reshape(-1)
+            tens_rwd  = self.val_to(tens_rwd)
+            tens_max  = tens_rwd + self.gamma * tens_ans
             tens_max  = torch.cat([tens_max.reshape(-1, 1) for i in range(tens_act.shape[-1])], dim=1)
             tens_ans  = tens_max * tens_act.reshape(-1, tens_act.shape[-1]) # 3次元になることは想定しない
         loss = self.criterion(tens_pred, tens_ans)

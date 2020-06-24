@@ -1,7 +1,11 @@
+import cv2
+import numpy as np
+import pandas as pd
 
 # local package
-from kkreinforce.lib.tsp import TSPModel, TSPModel2, TSPModel3, TSPModel4, TSPModel5, TSPModel6
+from kkreinforce.lib.tsp import TSPModel, TSPModel2, TSPModel3, TSPModel4, TSPModel5, TSPModel6, TSPModel7
 from kkimagemods.util.logger import set_logger, set_loglevel
+
 
 if __name__ == "__main__":
     #set_loglevel(log_level="debug")
@@ -45,12 +49,17 @@ if __name__ == "__main__":
     for _ in range(1000):
         model.train(n_episode=20)
         model.play(output="result_1000.html")
-    """
 
-    model = TSPModel6(0.05, 0.5, 0.98, n_capital=20)
+    model = TSPModel6(0.2, 0.5, 0.98, n_capital=20)
     for _ in range(1000):
         model.train(n_episode=20)
         model.play(output="result_1000.html")
+    """
+    model = TSPModel7(0.2, 0.5, 0.98, n_capital=10)
+    for _ in range(1000):
+        model.train(n_episode=20)
+        model.play(output="result_1000.html")
+
     """
     # 行った国の履歴を考慮するDQNのTSP
     model = TSPModel4(0.05, 0.5, 0.98, n_capital=10)
