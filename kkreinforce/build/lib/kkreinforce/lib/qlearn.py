@@ -1,17 +1,28 @@
 import pandas as pd
 import numpy as np
+import torch
 from typing import List, Tuple
+import copy
 
 # local package
+from kkreinforce.lib.kkrl import RLBase, StateManager, ReplayMemory, ActionValueFunction, RLBaseNN
+from kkreinforce.lib.kknn import TorchNN
 from kkimagemods.util.logger import set_logger, set_loglevel
 logger = set_logger(__name__)
 
 
-class QTable(object):
+
+class QTable(ActionValueFunction):
+    """
+    Q-Learning における行動価値関数Qをテーブル形式で実装する.
+    状態空間は離散値である必要がある
+    """
     def __init__(self, state_list: List[object], action_list: List[object], alpha: float, gamma: float):
         super().__init__()
+        # Q table
         self.q     = pd.DataFrame(np.nan, index=state_list, columns=action_list, dtype=float)
         self.ndf   = self.q.values # 遅いので参照形式にしておく
+        # Q-learning のハイパーパラメータ
         self.alpha = alpha
         self.gamma = gamma
         # index を参照するのを高速化する辞書を予め用意しておく
@@ -57,12 +68,11 @@ class QTable(object):
         return val, action
 
 
-    def update(self, state, action, reward, state_next, prob_actions: np.ndarray=None, on_episode: bool=False):
+    def update(self, state, action, reward, state_next, prob_actions: np.ndarray=None, **kward):
         """
         Q table の更新を行う
-        on_episode は使わないが、DQNで必要なので定義しておく
+        Q(s, a) = Q(s, a) + alpha*(r+gamma*maxQ(s')-Q(s, a))
         """
-        # Q(s, a) = Q(s, a) + alpha*(r+gamma*maxQ(s')-Q(s, a))
         q     = self.get_value(state, action=action) # Q(s, a)
         max_q = self.get_max(state_next, prob_actions=prob_actions)[0]
         q_update = (self.alpha * (reward + (self.gamma * max_q) - q))
@@ -73,49 +83,95 @@ class QTable(object):
 
 
 
-class QLearn(object):
+class DQN(RLBaseNN):
     """
-    仮想クラスっぽく作る. overrideする関数は必須
+    Q-Learning における行動価値関数QをNNで実装する.
     """
-    def __init__(self, qtable: QTable, epsilon: float):
+    def __init__(self, 
+        torch_nn: TorchNN, action_list: List[object], 
+        gamma: float, 
+        batch_size: int, capacity: int, unit_memory: str=None, lr: float=0.001, **kward
+    ):
+        super(DQN, self).__init__(
+            torch_nn, action_list, batch_size, capacity, 
+            unit_memory=unit_memory, lr=lr
+        )
+        self.gamma = gamma
+        # loss function
+        self.criterion = torch.nn.SmoothL1Loss(reduction="sum")
+        # Freezing the target network
+        self.nn_freez = copy.deepcopy(self.nn)
+        self.nn_freez.load_state_dict(self.nn.state_dict().copy())
+        self.synchronize_cnt = 0
+        self.synchronize_max = 2
+
+
+    def to_cuda(self):
+        super().to_cuda()
+        self.nn_freez.to(torch.device("cuda:0"))
+        self.criterion.to(torch.device("cuda:0"))
+
+
+    def update_main(self, state, action, reward, state_next, prob_actions):
+        """
+        DQN の Loss 計算を行う
+        """
+        tens_act  = self.conv_onehot(action)
+        tens_act  = self.val_to(tens_act)
+        if len(tens_act.shape) == 1: tens_act = tens_act.reshape(-1, tens_act.shape[-1]) # 1次元は2次元に
+        tens_pred = torch.from_numpy(state.astype(np.float32))
+        tens_pred = self.val_to(tens_pred)
+        tens_pred = self.nn(tens_pred)
+        tens_pred = tens_pred * tens_act.reshape(-1, tens_pred.shape[-1]) # 3次元になることは想定しない
+        with torch.no_grad():
+            # Double DQN では行動は学習中のネットワークで決定する. ただ、その行動における価値については、freez NN で決める
+            tens_ans  = torch.from_numpy(state_next.astype(np.float32))
+            tens_ans  = self.val_to(tens_ans)
+            tens_ans1 = self.nn(tens_ans, option=("not_first" if self.memory.unit_memory == "episode" else None))
+            if (prob_actions == None).sum() == 0:
+                prob_actions_wk = prob_actions.copy().astype(np.float32)
+                prob_actions_wk[prob_actions_wk == 0] = np.nan
+                prob_actions_wk = torch.from_numpy(prob_actions_wk).reshape(-1, tens_ans1.shape[-1])
+                prob_actions_wk  = self.val_to(prob_actions_wk)
+                tens_ans1 = tens_ans1 * prob_actions_wk # 3次元になることは想定しない
+                tens_ans1[torch.isnan(tens_ans1)] = float("-inf") # nan だと max で nan になるので -inf を埋める
+            tens_ans0, tens_ans1 = tens_ans1.max(axis=1) # 最大となるところのindex
+            tens_ans2 = self.nn_freez(tens_ans, option=("not_first" if self.memory.unit_memory == "episode" else None))
+            tens_ans2[torch.isinf(tens_ans0), :] = 0
+            tens_ans  = tens_ans2[:, tens_ans1][torch.eye(tens_ans1.shape[0]).bool()]
+            tens_rwd  = torch.tensor(reward.astype(np.float32)).reshape(-1)
+            tens_rwd  = self.val_to(tens_rwd)
+            tens_max  = tens_rwd + self.gamma * tens_ans
+            tens_max  = torch.cat([tens_max.reshape(-1, 1) for i in range(tens_act.shape[-1])], dim=1)
+            tens_ans  = tens_max * tens_act.reshape(-1, tens_act.shape[-1]) # 3次元になることは想定しない
+        loss = self.criterion(tens_pred, tens_ans)
+        logger.info(f"loss: {loss}", color=["BOLD","WHITE"])
+        loss.backward()
+        self.optimizer.step()
+        self.synchronize_cnt += 1
+
+        if self.synchronize_cnt % self.synchronize_max == self.synchronize_max - 1:
+            # あるカウントが溜まったら NN を同期する
+            self.nn_freez.load_state_dict(self.nn.state_dict().copy())
+            self.synchronize_cnt = 0
+
+
+
+class QLearn(RLBase):
+    """
+    Q-Learning. 継承して使用する
+    """
+    def __init__(self, qfunc: ActionValueFunction, epsilon: float):
         """
         Params::
             qtable: QTable or DQN
             epsilon: ランダム行動を取る確率
         """
-        self.qtable       = qtable
-        self.state_now    = None
-        self.state_prev   = None
-        self.action_prev  = None
-        self.reward_prev  = None
-        self.prob_actions = None
-        self.step         = 0
-        self.episode      = 0
-        self.epsilon      = epsilon
-        self.is_eval      = False # 学習外ではこのフラグで状態の更新などを制御する
+        super(QLearn, self).__init__()
+        self.prob_actions: np.ndarray[bool] = None # 行動を制御するためのフラグの導入
+        self.qfunc   = qfunc   # Q関数
+        self.epsilon = epsilon # random行動確率
     
-    def initialize(self):
-        """
-        state_prev, action_prev, reward_prev, state_now, self.action_prev を初期化する
-        """
-        raise NotImplementedError()
-
-    def init(self):
-        """ オーバーライドしない """
-        logger.info("Initialize", color=["BOLD", "GREEN"])
-        self.is_eval = False
-        self.step = 0
-        self.initialize()
-
-    def state(self, state_prev: object=None, action_prev: object=None) -> object:
-        """
-        state_prev と action_prev から決まる state を返却する
-        """
-        state_prev  = self.state_prev  if state_prev  is None else state_prev 
-        action_prev = self.action_prev if action_prev is None else action_prev 
-        raise NotImplementedError()
-        return object()
-
     def action_best(self) -> object:
         """
         state_now から決定される最適 action を返却する
@@ -137,134 +193,13 @@ class QLearn(object):
         logger.debug(f'action: {action}.')
         return action
 
-    def reward(self, state_prev: object=None, action_prev: object=None) -> object:
-        """
-        state_prev と action_prev から決まる reward を返却する
-        """
-        state_prev  = self.state_prev  if state_prev  is None else state_prev 
-        action_prev = self.action_prev if action_prev is None else action_prev 
-        raise NotImplementedError()
-        return object()
-
-    def transition_before(self): pass
-    def transition_middle(self): pass
-    def transition_after( self): pass
-
-    def transition(self, action: object = None):
-        """
-        state(t), action(t), reward(t), state(t+1)の遷移を行う
-        action が確率的行動の場合を考慮し、引数のaction が入力された場合は
-        その行動を確定的に行い、Noneの場合は action() に従う事とする
-        """
-        self.transition_before()
-        self.step += 1 # step を追加する
-        self.action_prev = action if action is not None else self.action()
-        self.state_prev  = self.state_now
-        self.transition_middle()
-        self.state_now   = self.state()
-        self.reward_prev = self.reward()
-        self.transition_after()
-    
-    def is_finish(self) -> bool:
-        raise NotImplementedError()
- 
     def q_update(self):
         """
         Q値の更新を行う
         Q(s, a) = Q(s, a) + alpha*(r+gamma*maxQ(s')-Q(s, a))
         """
-        logger.debug(f"state_prev: {self.state_prev}, action_prev: {self.action_prev}, reward_prev: {self.reward_prev}, state_now: {self.state_now}", color=["YELLOW"])
-        self.qtable.update(self.state_prev, self.action_prev, self.reward_prev, self.state_now, prob_actions=self.prob_actions, on_episode=(self.is_finish() == False))
-        
-    def train(self, n_episode: int=100):
-        """
-        学習する
-        """
-        for i in range(n_episode):
-            logger.info(f"episode: {self.episode}", color=["BOLD", "BLUE"])
-            self.init()
-            while self.is_finish() == False:
-                self.transition()
-                self.q_update()
-            self.episode += 1
-
-
-class StateManager(object):
-    """
-    状態管理のためのclass
-    DQNにおいては、状態の数(input node数)はQ-tableのように全ての組み合わせの数にならない。
-    例えば、行った国の状態をbit で表すと、(3カ国の場合)000,001,010,100,011,101,110,111のように2^3となるが、node数では3 nodeで表せる
-    """
-    def __init__(self):
-        super(StateManager, self).__init__()
-        self.dict_state = {}
-        self.list_names = []
+        logger.debug(f"state_prev: {self.state_prev}, action_prev: {self.action_prev}, reward_now: {self.reward_now}, state_now: {self.state_now}", color=["YELLOW"])
+        self.qfunc.update(self.state_prev, self.action_prev, self.reward_now, self.state_now, prob_actions=self.prob_actions, on_episode=(self.is_finish() == False))
     
-    def __len__(self):
-        count = 0
-        for x in self.list_names:
-            if self.dict_state[x]["type"] == "onehot":
-                count += self.dict_state[x]["nclass"]
-            else:
-                count += 1
-        return count
-    
-    def set_state(self, name: str, state_type: str, state_list: List[object] = None):
-        """
-        Params::
-            name: state の名称
-            state_type: numeric, list, binary, onehot
-                ※ binary の場合、その値が入ってこなければ 0 を入力する
-            state_list: str, onehot の場合は必要
-        """
-        self.list_names.append(name)
-        state = {}
-        state["type"]   = state_type
-        state["state"]  = {x:i for i, x in enumerate(state_list)} if state_list is not None else {}
-        state["index"]  = {i:x for i, x in enumerate(state_list)} if state_list is not None else {}
-        state["nclass"] = len(state_list) if state_list is not None else 0
-        self.dict_state[name] = state
-    
-    def pattern(self) -> List[Tuple[object]]:
-        """
-        Return::
-            考えられる組み合わせの状態を全て返却する. numeric や onehot の場合は error とする
-        """
-        listwk = []
-        for x in self.list_names:
-            if   self.dict_state[x]["type"] == "list":
-                listwk.append(list(self.dict_state[x]["state"].keys()))
-            elif self.dict_state[x]["type"] == "binary":
-                listwk.append([0, 1])
-            elif self.dict_state[x]["type"] == "onehot":
-                raise Exception(f'We can not calculate {self.dict_state[x]["type"]} type.')
-            elif self.dict_state[x]["type"] == "numeric":
-                raise Exception(f'We can not calculate {self.dict_state[x]["type"]} type.')
-        df = None
-        for i, listwkwk in enumerate(listwk):
-            if df is None:
-                df = pd.DataFrame(listwkwk, columns=[i])
-                df["__work"] = 1
-            else:
-                dfwk = pd.DataFrame(listwkwk, columns=[i])
-                dfwk["__work"] = 1
-                df = pd.merge(df, dfwk, how="left", on="__work")
-        df = df.drop(columns=["__work"])
-        return df.apply(lambda x: tuple(x),axis=1).to_list()
-    
-    def conv(self, values) -> List[object]:
-        output = np.zeros(0).astype(float)
-        is_dict = (type(values) == dict)
-        for i, x in enumerate(self.list_names):
-            val = values.get(x) if is_dict else values[i]
-            if   self.dict_state[x]["type"] == "numeric":
-                output = np.append(output, val)
-            elif self.dict_state[x]["type"] == "list":
-                output = np.append(output, self.dict_state[x]["state"][val])
-            elif self.dict_state[x]["type"] == "onehot":
-                val = np.identity(self.dict_state[x]["nclass"])[self.dict_state[x]["state"][val]]
-                output = np.append(output, val)
-            elif self.dict_state[x]["type"] == "binary":
-                val = False if val is None else val
-                output = np.append(output, bool(val))
-        return output.astype(int)
+    def train_after_step(self):
+        self.q_update()
