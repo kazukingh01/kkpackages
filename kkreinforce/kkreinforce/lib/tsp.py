@@ -1,7 +1,6 @@
 from typing import List
 import pandas as pd
 import numpy as np
-import folium
 import torch
 import cv2
 pd.options.display.max_rows = 100
@@ -12,28 +11,7 @@ from kkreinforce.lib.dqn import DQN, TorchNN, Layer
 from kkimagemods.util.logger import set_logger, set_loglevel
 logger = set_logger(__name__)
 
-
-def sigmoid(a):
-    return 1 / (1 + np.exp(-a))
-
-def cal_rho(lon_a,lat_a,lon_b,lat_b):
-    ra=6378.140  # equatorial radius (km)
-    rb=6356.755  # polar radius (km)
-    F=(ra-rb)/ra # flattening of the earth
-    rad_lat_a=np.radians(lat_a)
-    rad_lon_a=np.radians(lon_a)
-    rad_lat_b=np.radians(lat_b)
-    rad_lon_b=np.radians(lon_b)
-    pa=np.arctan(rb/ra*np.tan(rad_lat_a))
-    pb=np.arctan(rb/ra*np.tan(rad_lat_b))
-    xx=np.arccos(np.sin(pa)*np.sin(pb)+np.cos(pa)*np.cos(pb)*np.cos(rad_lon_a-rad_lon_b))
-    c1=(np.sin(xx)-xx)*(np.sin(pa)+np.sin(pb))**2/np.cos(xx/2)**2
-    c2=(np.sin(xx)+xx)*(np.sin(pa)-np.sin(pb))**2/np.sin(xx/2)**2
-    dr=F/8*(c1-c2)
-    rho=ra*(xx+dr)
-    return float(rho)
-
-
+import folium
 from folium import MacroElement
 from folium.features import Template
 class DivIcon(MacroElement):
@@ -137,13 +115,30 @@ class TSPModelBase(object):
             df = self.df
             se1 = df[df["capital_en"] == city1].iloc[0]
             se2 = df[df["capital_en"] == city2].iloc[0]
-            val = cal_rho(se1["lon"], se1["lat"], se2["lon"], se2["lat"]) / 1000.
+            val = self.cal_rho(se1["lon"], se1["lat"], se2["lon"], se2["lat"]) / 1000.
         return val
     
     def get_lat_lon(self, city: str) -> (float, float, ):
         df = self.df
         return df[df["capital_en"] == city].iloc[0][["lat", "lon"]].values
 
+    @classmethod
+    def cal_rho(cls, lon_a,lat_a,lon_b,lat_b):
+        ra=6378.140  # equatorial radius (km)
+        rb=6356.755  # polar radius (km)
+        F=(ra-rb)/ra # flattening of the earth
+        rad_lat_a=np.radians(lat_a)
+        rad_lon_a=np.radians(lon_a)
+        rad_lat_b=np.radians(lat_b)
+        rad_lon_b=np.radians(lon_b)
+        pa=np.arctan(rb/ra*np.tan(rad_lat_a))
+        pb=np.arctan(rb/ra*np.tan(rad_lat_b))
+        xx=np.arccos(np.sin(pa)*np.sin(pb)+np.cos(pa)*np.cos(pb)*np.cos(rad_lon_a-rad_lon_b))
+        c1=(np.sin(xx)-xx)*(np.sin(pa)+np.sin(pb))**2/np.cos(xx/2)**2
+        c2=(np.sin(xx)+xx)*(np.sin(pa)-np.sin(pb))**2/np.sin(xx/2)**2
+        dr=F/8*(c1-c2)
+        rho=ra*(xx+dr)
+        return float(rho)
 
 
 class TSPModel(TSPModelBase, QLearn):
