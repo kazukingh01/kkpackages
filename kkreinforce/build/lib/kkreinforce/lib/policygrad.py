@@ -66,8 +66,10 @@ class PolicyGradient(RLBase):
     
     def train_before_episode(self):
         self.memory = ReplayMemory(float("inf"))
+
     def train_after_step(self):
         self.memory.push(self.state_prev, self.action_prev, self.reward_now, self.state_now, None, on_episode=(self.is_finish() == False))
+
     def train_after_episode(self):
         # reward を計算し直して格納する
         reward = np.array(Transition(*zip(* self.memory.memory)).reward)
