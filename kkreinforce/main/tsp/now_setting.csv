@@ -1,11 +1,11 @@
 ,country_code,name_jp,name_jps,name_en,name_ens,capital_jp,capital_en,iscapital,lat,lon,pop,pop_year,pop_ref,note_jp
-1,AF,アフガニスタン・イスラム共和国,アフガニスタン,Islamic Republic of Afghanistan,Afghanistan,カブール,Kabul,1,34.5553494,69.207486,3817241,2016,DYB2017,
-15,AR,アルゼンチン共和国,アルゼンチン,Argentine Republic,Argentina,ブエノスアイレス,Buenos_Aires,1,-34.6036844,-58.381559100000004,13879707,2016,DYB2017,都市圏の人口
-19,AM,アルメニア共和国,アルメニア,Republic of Armenia,Armenia,エレバン,Yerevan,1,40.179185700000005,44.4991029,1076716,2017,DYB2018,
-113,AT,オーストリア共和国,オーストリア,Republic of Austria,Austria,ウィーン,Vienna,1,48.208174299999996,16.3738189,1888776,2018,DYB2018,
-160,SG,シンガポール共和国,シンガポール,Republic of Singapore,Singapore,シンガポール,Singapore,1,1.355429,103.867722,5638676,2018,DYB2018,
-168,TH,タイ王国,タイ,Kingdom of Thailand,Thailand,バンコク,Bangkok,1,13.7563309,100.5017651,8305218,2010,DYB2017,都市圏の人口
-183,CN,中華人民共和国,中国,People's Republic of China,China,北京（ペキン）,Beijing,1,39.9041999,116.4073963,18796000,2016,DYB2017,都市圏の人口
+13,DZ,アルジェリア民主人民共和国,アルジェリア,People's Democratic Republic of Algeria,Algeria,アルジェ,Algiers,1,36.753768,3.0587561,2712944,2008,DYB2017,
+21,YE,イエメン共和国,イエメン,Republic of Yemen,Yemen,サヌア,Sana'a,1,15.3694451,44.1910066,1976286,2009,DYB2017,
+99,UA,ウクライナ,ウクライナ,Ukraine,Ukraine,キエフ,Kiev,1,50.4501,30.5234,2893215,2018,DYB2018,
+118,CA,カナダ,カナダ,Canada,Canada,オタワ,Ottawa,1,45.42152960000001,-75.69719309999999,1007501,2018,DYB2018,新・百万都市
+134,KP,朝鮮民主主義人民共和国,北朝鮮,Democratic People's Republic of Korea,North Korea,ピョンヤン,Pyongyang,1,39.0392193,125.7625241,2581076,2008,DYB2017,
+149,ZM,ザンビア共和国,ザンビア,Republic of Zambia,Zambia,ルサカ,Lusaka,1,-15.3875259,28.3228165,1747152,2010,DYB2017,
 349,DO,ドミニカ共和国,ドミニカ共和国,Dominican Republic,Dominican Republic,サントドミンゴ,Santo_Domingo,1,18.4860575,-69.9312117,1029607,2018,DYB2018,
-376,JP,日本国,日本,Japan,Japan,東京,Tokyo,1,35.70902589999999,139.73199250000002,9272740,2015,JP2015,人口は特別区（東京23区）の合計
-406,BR,ブラジル連邦共和国,ブラジル,Federative Republic of Brazil,Brazil,ブラジリア,Brasilia,1,-15.794392000000002,-47.882003999999995,2977216,2016,DYB2017,
+375,NE,ニジェール共和国,ニジェール,Republic of Niger,Niger,ニアメ,Niamey,1,13.511596300000003,2.1253854,1026848,2012,DYB2017,
+423,FR,フランス共和国,フランス,French Republic,France,パリ,Paris,1,48.856614,2.3522218999999995,2206488,2015,DYB2018,
+462,RO,ルーマニア,ルーマニア,Romania,Romania,ブカレスト,Bucharest,1,44.4267674,26.1025384,1826830,2017,DYB2018,

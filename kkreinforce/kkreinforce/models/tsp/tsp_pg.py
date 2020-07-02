@@ -23,7 +23,7 @@ class TSPModel(TSPModelBase, PolicyGradient):
     報酬:
         国を一周回ったときに報酬
     """
-    def __init__(self, epsilon: float, alpha: float, gamma: float, file_csv: str="../data/s59h30megacities_utf8.csv", n_capital: int=None):
+    def __init__(self, gamma: float, file_csv: str="../data/s59h30megacities_utf8.csv", n_capital: int=None):
         # まずは Base class で初期化して, df を load
         TSPModelBase.__init__(self, file_csv=file_csv, n_capital=n_capital)
 
@@ -32,8 +32,8 @@ class TSPModel(TSPModelBase, PolicyGradient):
 
         # State の定義
         self.state_mng = StateManager()
-        self.state_mng.set_state("country", state_type="onehot",        state_list=self.list_action)
-        self.state_mng.set_state("history", state_type="onehot_binary", state_list=self.list_action) # 国の滞在履歴を状態に組み込む
+        self.state_mng.set_state("country", state_type="onehot",       state_list=self.list_action)
+        self.state_mng.set_state("history", state_type="onehot_cntup", state_list=self.list_action) # 国の滞在履歴を状態に組み込む
 
         # NN の定義
         torch_nn = TorchNN(len(self.state_mng),
@@ -43,8 +43,9 @@ class TSPModel(TSPModelBase, PolicyGradient):
             Layer("fc2",   torch.nn.Linear,      len(self.list_action), None, (), {}),
             Layer("soft",  torch.nn.Softmax,     None, None, (), {"dim":1}),
         )
-        policy_nn = PolicyGradientNN(torch_nn, self.list_action, 128, 1000, unit_memory=None, lr=0.01)
-        PolicyGradient.__init__(self, policy=policy_nn, list_action=self.list_action)
+        policy_nn = PolicyGradientNN(torch_nn, self.list_action, 128, 1000, unit_memory=None, lr=0.001)
+        policy_nn.to_cuda()
+        PolicyGradient.__init__(self, gamma=gamma, policy=policy_nn, list_action=self.list_action)
         self.action_pprev  = None
 
         # 巡回できるようにするためのパラメータ
@@ -93,8 +94,10 @@ class TSPModel(TSPModelBase, PolicyGradient):
         action_prev = self.action_prev if action_prev is None else action_prev
         dist = self.distance(self.action_pprev, action_prev)
         self.loss += dist
-        return 10 if self.is_finish() else 0
-        #return -1 * self.loss if self.is_finish() else 0
+        r = 1 / self.loss if self.loss > 0 else 0
+        if self.action_pprev != action_prev:
+            r += 0.1
+        return r
 
 
     def transition_before_all(self):
@@ -113,6 +116,7 @@ class TSPModel(TSPModelBase, PolicyGradient):
 
 
     def is_finish(self) -> bool:
+        if self.step > 500: return True # 200回超えると強制終了
         if self.is_back and (self.prob_actions == True).sum() == 0:
             return True
         if (self.prob_actions == True).sum() == 0:
