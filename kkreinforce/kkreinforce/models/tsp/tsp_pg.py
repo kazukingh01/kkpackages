@@ -1,51 +1,28 @@
 import torch
 import numpy as np
+import folium
 from typing import List
 
 # local package
-from kkreinforce.lib.tsp import TSPModelBase
-from kkreinforce.lib.qlearn import StateManager
-from kkreinforce.lib.dqn import Layer, TorchNN
+from kkreinforce.lib.kkrl import StateManager
+from kkreinforce.lib.kknn import TorchNN, Layer
 from kkreinforce.lib.policygrad import PolicyGradient, PolicyGradientNN
+from kkreinforce.models.tsp.tsp_base import TSPModelBase, DivIcon
 from kkimagemods.util.logger import set_logger, set_loglevel
 logger = set_logger(__name__)
 
 
-import folium
-from folium import MacroElement
-from folium.features import Template
-class DivIcon(MacroElement):
-    def __init__(self, html='', size=(30,30), anchor=(0,0), style=''):
-        """TODO : docstring here"""
-        super(DivIcon, self).__init__()
-        self._name = 'DivIcon'
-        self.size = size
-        self.anchor = anchor
-        self.html = html
-        self.style = style
-
-        self._template = Template(u"""
-            {% macro header(this, kwargs) %}
-              <style>
-                .{{this.get_name()}} {
-                    {{this.style}}
-                    }
-              </style>
-            {% endmacro %}
-            {% macro script(this, kwargs) %}
-                var {{this.get_name()}} = L.divIcon({
-                    className: '{{this.get_name()}}',
-                    iconSize: [{{ this.size[0] }},{{ this.size[1] }}],
-                    iconAnchor: [{{ this.anchor[0] }},{{ this.anchor[1] }}],
-                    html : "{{this.html}}",
-                    });
-                {{this._parent.get_name()}}.setIcon({{this.get_name()}});
-            {% endmacro %}
-            """)
-
-
 
 class TSPModel(TSPModelBase, PolicyGradient):
+    """
+    巡回セールスマン問題を、方策勾配法で実装する
+    状態:
+        今いる国＋過去に行った国の履歴
+    行動:
+        次に行く国
+    報酬:
+        国を一周回ったときに報酬
+    """
     def __init__(self, epsilon: float, alpha: float, gamma: float, file_csv: str="../data/s59h30megacities_utf8.csv", n_capital: int=None):
         # まずは Base class で初期化して, df を load
         TSPModelBase.__init__(self, file_csv=file_csv, n_capital=n_capital)
@@ -68,6 +45,11 @@ class TSPModel(TSPModelBase, PolicyGradient):
         )
         policy_nn = PolicyGradientNN(torch_nn, self.list_action, 128, 1000, unit_memory=None, lr=0.01)
         PolicyGradient.__init__(self, policy=policy_nn, list_action=self.list_action)
+        self.action_pprev  = None
+
+        # 巡回できるようにするためのパラメータ
+        self.is_back       = False
+        self.first_country = None
 
 
     def initialize(self):
@@ -81,15 +63,16 @@ class TSPModel(TSPModelBase, PolicyGradient):
         self.action_prev  = init_action
         self.state_now    = self.state_mng.conv().copy()
         self.state_prev   = self.state_now
-        self.reward_prev  = 0
+        self.reward_now   = 0
 
-        self.prob_actions = np.ones_like(self.list_action).astype(bool)
+        self.prob_actions  = np.ones_like(self.list_action).astype(bool)
         self.prob_actions[self.list_action == self.action_prev] = False
-        self.country_prev = self.action_prev
-        self.country_now  = self.action_prev
-        self.action_pprev = self.action_prev
-        self.loss         = 0
-
+        self.country_prev  = self.action_prev
+        self.country_now   = self.action_prev
+        self.action_pprev  = self.action_prev
+        self.loss          = 0
+        self.is_back       = False
+        self.first_country = self.action_prev
         self.df.to_csv("now_setting.csv")
 
 
@@ -99,10 +82,7 @@ class TSPModel(TSPModelBase, PolicyGradient):
         """
         action_prev = self.action_prev if action_prev is None else action_prev
         state_prev  = self.state_prev  if state_prev  is None else state_prev
-        if self.prob_actions[self.list_action == action_prev][0]:
-            return self.state_mng.conv_tmp({"country": action_prev, "history":action_prev})
-        else:
-            return self.state_mng.conv()
+        return self.state_mng.conv_tmp({"country": action_prev, "history":action_prev})
 
 
     def reward(self, state_prev: object=None, action_prev: object=None, state_now: object=None) -> object:
@@ -120,21 +100,25 @@ class TSPModel(TSPModelBase, PolicyGradient):
     def transition_before_all(self):
         self.action_pprev = self.action_prev
 
+
     def transition_after_state(self):
         self.prob_actions[self.list_action == self.action_prev] = False
         self.state_mng.set_value("country", self.action_prev)
         self.state_mng.set_value("history", self.action_prev)
- 
+
+
     def transition_after_all(self):
         self.country_prev = self.country_now
         self.country_now  = self.action_prev
 
 
     def is_finish(self) -> bool:
-        if (self.prob_actions == True).sum() == 0 or self.step > 500:
+        if self.is_back and (self.prob_actions == True).sum() == 0:
             return True
-        else:
-            return False
+        if (self.prob_actions == True).sum() == 0:
+            self.is_back = True
+            self.prob_actions[self.list_action == self.first_country] = True # 最初の国を行けるようにする
+        return False
 
 
     """ ※ここから独自関数※ """
