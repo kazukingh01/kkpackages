@@ -152,7 +152,7 @@ class StateManager(object):
         """
         Params::
             name: state の名称
-            state_type: numeric, list, binary, onehot
+            state_type: numeric, list, binary, onehot, onehot_cntup, onehot_binary
                 ※ binary の場合、その値が入ってこなければ 0 を入力する
             state_list: str, onehot の場合は必要
         """
@@ -173,7 +173,7 @@ class StateManager(object):
         listwk = []
         for x in self.list_names:
             if   self.dict_state[x]["type"] == "list":
-                listwk.append(list(self.dict_state[x]["state"].keys()))
+                listwk.append(list(self.dict_state[x]["state"].values()))
             elif self.dict_state[x]["type"] == "binary":
                 listwk.append([0, 1])
             elif self.dict_state[x]["type"] == "onehot":
@@ -246,13 +246,14 @@ class StateManager(object):
 Transition = namedtuple('Transition',('state', 'action', 'reward', 'state_next', 'prob_actions'))
 class ReplayMemory(object):
 
-    def __init__(self, capacity: int, unit_memory: str=None):
+    def __init__(self, capacity: int, unit_memory: str=None, memory_best: bool=False):
         super(ReplayMemory, self).__init__()
         self.capacity = capacity + 1 # best episode 用に追加
         self.memory   = []
         self.position = 0
         self.memory_in_episode = []
         self.unit_memory = unit_memory
+        self.memory_best = memory_best
         self.reward_max  = -np.inf
         self.trans_best  = None
 
@@ -274,14 +275,14 @@ class ReplayMemory(object):
                 if len(self.memory) < self.capacity:
                     self.memory.append(None)
                 # Best episode は 消さないようにしたい
-                if self.reward_max <= self.memory_in_episode[-1].reward:
+                if self.memory_best and self.reward_max <= self.memory_in_episode[-1].reward:
                     self.reward_max = self.memory_in_episode[-1].reward
                     self.memory[0]  = self.memory_in_episode.copy()
                 self.memory[self.position] = self.memory_in_episode.copy()
                 self.position = self.position + 1
                 if self.capacity != float("inf"):
                     self.position = self.position % self.capacity
-                if self.position == 0: self.position += 1 # 0 index は特別なのでずらす
+                if self.memory_best and self.position == 0: self.position += 1 # 0 index は特別なのでずらす
                 self.memory_in_episode = []
         else:
             raise Exception(f"We don't consider this unit: {self.unit_memory}")
@@ -320,6 +321,7 @@ class ActionValueFunction(object):
     def get_value(self): raise NotImplementedError()
     def get_max  (self): raise NotImplementedError()
     def update   (self): raise NotImplementedError()
+    def store    (self): pass
 
 
 
