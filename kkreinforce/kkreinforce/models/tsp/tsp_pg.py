@@ -32,18 +32,21 @@ class TSPModel(TSPModelBase, PolicyGradient):
 
         # State の定義
         self.state_mng = StateManager()
-        self.state_mng.set_state("country", state_type="onehot",       state_list=self.list_action)
-        self.state_mng.set_state("history", state_type="onehot_cntup", state_list=self.list_action) # 国の滞在履歴を状態に組み込む
+        self.state_mng.set_state("country", state_type="onehot",        state_list=self.list_action)
+        self.state_mng.set_state("history", state_type="onehot_binary", state_list=self.list_action) # 国の滞在履歴を状態に組み込む
+        self.state_mng.set_state("is_last", state_type="binary")
 
         # NN の定義
         torch_nn = TorchNN(len(self.state_mng),
-            Layer("fc1",   torch.nn.Linear,      128,  None, (), {}),
+            Layer("fc1",   torch.nn.Linear,      64,   None, (), {}),
             Layer("norm1", torch.nn.BatchNorm1d, 0,    None, (), {}),
-            Layer("relu1", torch.nn.ReLU,        None, None, (), {}),
-            Layer("fc2",   torch.nn.Linear,      len(self.list_action), None, (), {}),
+            Layer("fc2",   torch.nn.Linear,      64,   None, (), {}),
+            Layer("norm2", torch.nn.BatchNorm1d, 0,    None, (), {}),
+            Layer("fc3",   torch.nn.Linear,      len(self.list_action), None, (), {}),
             Layer("soft",  torch.nn.Softmax,     None, None, (), {"dim":1}),
         )
-        policy_nn = PolicyGradientNN(torch_nn, self.list_action, 128, 1000, unit_memory=None, lr=0.001)
+        #torch_nn.set_weight(0.01)
+        policy_nn = PolicyGradientNN(torch_nn, self.list_action, unit_memory=None, lr=0.001)
         policy_nn.to_cuda()
         PolicyGradient.__init__(self, gamma=gamma, policy=policy_nn, list_action=self.list_action)
         self.action_pprev  = None
@@ -83,7 +86,7 @@ class TSPModel(TSPModelBase, PolicyGradient):
         """
         action_prev = self.action_prev if action_prev is None else action_prev
         state_prev  = self.state_prev  if state_prev  is None else state_prev
-        return self.state_mng.conv_tmp({"country": action_prev, "history":action_prev})
+        return self.state_mng.conv_tmp({"country": action_prev, "history": action_prev})
 
 
     def reward(self, state_prev: object=None, action_prev: object=None, state_now: object=None) -> object:
@@ -94,9 +97,11 @@ class TSPModel(TSPModelBase, PolicyGradient):
         action_prev = self.action_prev if action_prev is None else action_prev
         dist = self.distance(self.action_pprev, action_prev)
         self.loss += dist
-        r = 1 / self.loss if self.loss > 0 else 0
+        r = 0 
         if self.action_pprev != action_prev:
-            r += 0.1
+            r = -1
+        elif self.is_finish() == 1:
+            r = 10
         return r
 
 
@@ -116,13 +121,14 @@ class TSPModel(TSPModelBase, PolicyGradient):
 
 
     def is_finish(self) -> bool:
-        if self.step > 500: return True # 200回超えると強制終了
+        if self.step > 200: return 2 # 200回超えると強制終了
         if self.is_back and (self.prob_actions == True).sum() == 0:
-            return True
+            return 1
         if (self.prob_actions == True).sum() == 0:
             self.is_back = True
             self.prob_actions[self.list_action == self.first_country] = True # 最初の国を行けるようにする
-        return False
+            self.state_mng.set_value("is_last", True)
+        return 0
 
 
     """ ※ここから独自関数※ """
@@ -137,7 +143,7 @@ class TSPModel(TSPModelBase, PolicyGradient):
         lat_s, lon_s = self.get_lat_lon(self.country_now)
         folium.Marker(location=[lat_s, lon_s], popup=self.country_now).add_to(world_map)
         i = 0
-        while self.is_finish() == False:
+        while self.is_finish() == 0:
             if set_actions is not None:
                 action = set_actions[i]
                 i += 1

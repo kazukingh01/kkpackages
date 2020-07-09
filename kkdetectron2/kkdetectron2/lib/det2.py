@@ -1,7 +1,8 @@
 import os, datetime, copy
 import numpy as np
+import pandas as pd
 import cv2
-from typing import List
+from typing import List, Tuple
 import torch
 
 # detectron2
@@ -40,7 +41,8 @@ class MyDet2(DefaultTrainer):
             base_lr: float=0.01, num_workers: int=2, resume: bool=False, 
             # train and test params
             model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", weight_path: str=None, 
-            classes: List[str] = None, input_size: tuple=(800, 1333), threshold: float=0.2, outdir: str="./output"
+            classes: List[str] = None, keypoint_names: List[str] = None, keypoint_flip_map: List[Tuple[str]] = None,
+            input_size: tuple=(800, 1333), threshold: float=0.2, outdir: str="./output"
         ):
         # coco dataset
         self.dataset_name       = dataset_name
@@ -52,11 +54,17 @@ class MyDet2(DefaultTrainer):
         self.__register_coco_instances() # Coco dataset setting
         self.cfg                = cfg if cfg is not None else self.set_config(
             weight_path=weight_path, threshold=threshold, max_iter=max_iter, num_workers=num_workers, 
-            base_lr=base_lr, classes=classes, input_size=input_size, outdir=outdir
+            base_lr=base_lr, input_size=input_size, outdir=outdir
         )
         # classes は強制でセットする
         self.cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(classes)
         MetadataCatalog.get(self.dataset_name).thing_classes = classes
+        if keypoint_names is not None:
+            self.cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = len(keypoint_names)
+            # Key point の metadata を set
+            MetadataCatalog.get(self.dataset_name).keypoint_names = keypoint_names
+            MetadataCatalog.get(self.dataset_name).keypoint_flip_map = keypoint_flip_map
+            MetadataCatalog.get(self.dataset_name).keypoint_connection_rules = [(x[0], x[1], (255,0,0)) for x in keypoint_flip_map] # Visualizer の内部で使用している
         self.mapper = None if aug_json_file_path is None else MyMapper(self.cfg, aug_json_file_path, is_train=self.is_train)
 
         if self.is_train:
@@ -84,7 +92,7 @@ class MyDet2(DefaultTrainer):
 
     def set_config(
         self, weight_path: str=None, threshold: float=0.2, max_iter: int=100, num_workers: int=2, 
-        classes: List[str]=None, base_lr: float=0.01, input_size: tuple=(800,1333,), outdir: str="./output"
+        base_lr: float=0.01, input_size: tuple=(800,1333,), outdir: str="./output"
     ) -> CfgNode:
         """
         see https://detectron2.readthedocs.io/modules/config.html#detectron2.config.CfgNode
@@ -152,9 +160,10 @@ class MyDet2(DefaultTrainer):
                 img, add_padding, add_padding, add_padding, add_padding,
                 cv2.BORDER_CONSTANT, value=[0, 0, 0]
             )
-        v = Visualizer(img[:, :, ::-1],
+        v = Visualizer(
+            img[:, :, ::-1],
             metadata=metadata, 
-            scale=0.8, 
+            scale=0.6, 
             instance_mode=None #ColorMode.IMAGE_BW # remove the colors of unsegmented pixels
         )
         v = v.draw_instance_predictions(output["instances"].to("cpu"))
@@ -310,6 +319,36 @@ class MyDet2(DefaultTrainer):
         self.coco_json_path = self.coco_json_path_org
         self.__register_coco_instances()
         super().__init__(self.cfg)
+    
+
+    def predict_to_df(self, img: np.ndarray) -> pd.DataFrame:
+        from detectron2.data import MetadataCatalog
+        metadata = MetadataCatalog.get(self.dataset_name)
+        output = self.predict(img)
+        output = output["instances"].to("cpu")
+        df = pd.DataFrame()
+        for i, x in enumerate(output.get("pred_classes")):
+            se = pd.Series(dtype=object)
+            se["class_name"] = metadata.thing_classes[x]
+            se["bbox"]       = output.get("pred_boxes").tensor[i].detach().numpy()
+            se["bbox_score"] = float(output.get("scores")[i])
+            df = df.append(se, ignore_index=True)
+        return df
+    
+
+    def evalation(self, img_paths: List[str]):
+        df = pd.DataFrame()
+        for x in img_paths:
+            print(x)
+            img = cv2.imread(x)
+            dfwk = self.predict_to_df(img)
+            if dfwk.shape[0] > 0:
+                dfwk["image_path"] = x
+            else:
+                dfwk = pd.DataFrame([x], columns=["image_path"])
+            df = pd.concat([df, dfwk], ignore_index=True, sort=False)
+        return df
+
 
 
 class MyMapper(DatasetMapper):
@@ -445,10 +484,11 @@ class Det2Debug(DefaultTrainer):
         metadata = MetadataCatalog.get(self._dataset_name)
         im = cv2.imread(file_path)
         outputs = self.predictor(im)
-        v = Visualizer(im[:, :, ::-1],
-                    metadata=metadata, 
-                    scale=0.8, 
-                    instance_mode=None   # remove the colors of unsegmented pixels
+        v = Visualizer(
+            im[:, :, ::-1],
+            metadata=metadata, 
+            scale=1.0, 
+            instance_mode=None   # remove the colors of unsegmented pixels
         )
         v = v.draw_instance_predictions(outputs["instances"].to("cpu"))
         cv2.imshow("test", v.get_image()[:, :, ::-1])

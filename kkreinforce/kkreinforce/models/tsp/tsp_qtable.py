@@ -118,7 +118,7 @@ class TSPModel(TSPModelBase, QLearn):
         Q(s, a) = Q(s, a) + alpha*(r+gamma*maxQ(s')-Q(s, a))
         """
         logger.debug(f"state_prev: {self.state_prev}, action_prev: {self.action_prev}, reward_now: {self.reward_now}, state_now: {self.state_now}", color=["YELLOW"])
-        self.qfunc.update(self.state_prev, self.action_prev, self.reward_now, self.state_now, prob_actions=self.prob_actions, on_episode=(self.is_finish() == False))
+        self.qfunc.update(self.state_prev, self.action_prev, self.reward_now, self.state_now, prob_actions=self.prob_actions, on_episode=(self.is_finish() == 0))
 
 
     """ ※ここから独自関数※ """
@@ -133,7 +133,7 @@ class TSPModel(TSPModelBase, QLearn):
         lat_s, lon_s = self.get_lat_lon(self.country_now)
         folium.Marker(location=[lat_s, lon_s], popup=self.country_now).add_to(world_map)
         i = 0
-        while self.is_finish() == False:
+        while self.is_finish() == 0:
             if set_actions is not None:
                 action = set_actions[i]
                 i += 1

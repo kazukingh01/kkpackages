@@ -2,6 +2,9 @@ import torch
 from torch import nn
 from typing import List
 from collections import namedtuple
+# local package
+from kkimagemods.util.logger import set_loglevel, set_logger
+logger = set_logger(__name__)
 
 
 Layer = namedtuple("Layer", ("name", "module", "node", "calc_type", "params", "kwards"))
@@ -45,6 +48,8 @@ class TorchNN(nn.Module):
                 output = output[:, -1, :]
             elif self.indexes[i] == "rnn_all":
                 output = output.reshape(-1, output.shape[-1])
+            elif self.indexes[i] == "debug":
+                logger.info(f'{module}: {output}')
             elif self.indexes[i] == "call_options":
                 if   option is not None and option == "not_first":
                     output = output[:, 1:, :]
@@ -55,3 +60,15 @@ class TorchNN(nn.Module):
         return output
 
 
+    def set_weight(self, weight: float):
+        # 重みの初期化
+        for name, _ in self.named_modules():
+            if name != "":
+                try:
+                    self.__getattr__(name).weight.data.fill_(weight)
+                except AttributeError:
+                    pass
+                try:
+                    self.__getattr__(name).bias.data.fill_(weight)
+                except AttributeError:
+                    pass

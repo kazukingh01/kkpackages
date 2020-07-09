@@ -591,6 +591,21 @@ class CocoManager:
         self.re_index()
     
 
+    def check_file_exist(self, img_dir: str=None):
+        list_target = []
+        if img_dir is None:
+            for x in self.df_json["images_coco_url"].unique():
+                if os.path.exists(x):
+                    list_target.append(x)
+            self.df_json = self.df_json.loc[self.df_json["images_coco_url"].isin(list_target), :]
+        else:
+            img_dir = correct_dirpath(img_dir)
+            for x in self.df_json["images_file_name"].unique():
+                if os.path.exists(img_dir + x):
+                    list_target.append(x)
+            self.df_json = self.df_json.loc[self.df_json["images_file_name"].isin(list_target), :]
+    
+
     def to_coco_format(self, df_json: pd.DataFrame = None):
         df_json = df_json.copy() if df_json is not None else self.df_json.copy()
         json_dict = {}
@@ -623,7 +638,7 @@ class CocoManager:
             f.write(self.to_coco_format())
     
 
-    def draw_infomation(self, src, imgpath: str = None, is_show=True) -> np.ndarray:
+    def draw_infomation(self, src, imgpath: str = None, is_show: bool=True, is_anno_name: bool=False) -> np.ndarray:
         # int の場合は その index の画像を見せる
         if   type(src) == int:
             df = self.df_json.iloc[src:src+1].copy() # df の状態で取得する
@@ -640,6 +655,8 @@ class CocoManager:
             # bounding box の描画
             x,y,w,h = se["annotations_bbox"]
             img = cv2.rectangle(img,(int(x),int(y)),(int(x+w),int(y+h)),(0,255,0),2)
+            if is_anno_name:
+                cv2.putText(img, se['categories_name'], (int(x),int(y)), cv2.FONT_HERSHEY_SIMPLEX, 2.0, (0, 255, 0), thickness=2)
             # segmentation の描画
             imgwk = np.zeros_like(img)
             for listwk in se["annotations_segmentation"]:
@@ -647,6 +664,14 @@ class CocoManager:
                 img   = cv2.polylines(img,[seg.reshape(-1,1,2)],True,(0,0,0))
                 imgwk = cv2.fillConvexPoly(imgwk, points=seg.reshape(-1, 2), color=(255,0,0))
             img = cv2.addWeighted(img, 1, imgwk, 0.8, 0)
+            # keypoint の描画
+            ann_key_pnt = np.array(se["annotations_keypoints"]).reshape(-1, 3).astype(int)
+            for j, (x, y, _, ) in enumerate(ann_key_pnt):
+                img = cv2.circle(img, (int(x), int(y)), 5, (0, 0, 255), thickness=-1)
+                if is_anno_name:
+                    cv2.putText(img, se['categories_keypoints'][j], (int(x),int(y)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), thickness=1)
+            for p1, p2 in se["categories_skeleton"]:
+                img = cv2.line(img, tuple(ann_key_pnt[p1][:2]), tuple(ann_key_pnt[p2][:2]), (0, 0, 255))
 
         if is_show:
             cv2.imshow("sample", img)
@@ -655,11 +680,11 @@ class CocoManager:
         return img
     
 
-    def output_draw_infomation(self, outdir: str, imgpath: str = None, exist_ok: bool=False, remake: bool=False):
+    def output_draw_infomation(self, outdir: str, imgpath: str = None, exist_ok: bool=False, remake: bool=False, is_anno_name: bool=False):
         outdir = correct_dirpath(outdir)
         makedirs(outdir, exist_ok=exist_ok, remake=remake)
         for x in self.df_json["images_file_name"].unique():
-            img = self.draw_infomation(x, imgpath=imgpath, is_show=False)
+            img = self.draw_infomation(x, imgpath=imgpath, is_show=False, is_anno_name=is_anno_name)
             cv2.imwrite(outdir + x, img)
 
 

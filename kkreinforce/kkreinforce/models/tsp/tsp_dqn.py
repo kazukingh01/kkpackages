@@ -88,7 +88,7 @@ class TSPModel3(TSPModel):
         Q値の更新を行う
         """
         logger.debug(f"state_prev: {self.state_prev}, action_prev: {self.action_prev}, reward_now: {self.reward_now}, state_now: {self.state_now}", color=["YELLOW"])
-        self.qfunc.store(self.state_prev, self.action_prev, self.reward_now, self.state_now, prob_actions=self.prob_actions, on_episode=(self.is_finish() == False))
+        self.qfunc.store(self.state_prev, self.action_prev, self.reward_now, self.state_now, prob_actions=self.prob_actions, on_episode=(self.is_finish() == 0))
         self.qfunc.update()
 
 
@@ -231,8 +231,8 @@ class TSPModel5(TSPModel4):
         Q値の更新を行う
         """
         logger.debug(f"state_prev: {self.state_prev}, action_prev: {self.action_prev}, reward_now: {self.reward_now}, state_now: {self.state_now}", color=["YELLOW"])
-        self.qfunc.store(self.state_prev, self.action_prev, self.reward_now, self.state_now, prob_actions=self.prob_actions, on_episode=(self.is_finish() == False))
-        if self.is_finish():
+        self.qfunc.store(self.state_prev, self.action_prev, self.reward_now, self.state_now, prob_actions=self.prob_actions, on_episode=(self.is_finish() == 0))
+        if self.is_finish() >= 1:
             self.qfunc.update()
 
 
@@ -261,7 +261,7 @@ class TSPModel6(TSPModel5):
         self.loss += dist
         dist = 1./dist if dist > 0 else 0
         r = None
-        if self.is_finish() and self.is_eval == False:
+        if self.is_finish() >= 1 and self.is_eval == False:
             if self.loss_max is None:
                 self.loss_max = self.loss
             else:
@@ -273,7 +273,7 @@ class TSPModel6(TSPModel5):
             elif r > 0.9:  r = 5
             elif r > 0.8:  r = 2
             else:          r = -2
-        return r if self.is_finish() else 0
+        return r if self.is_finish() >= 1 else 0
 
     def play(self, output: str="result.html"):
         best_actions = None
@@ -374,7 +374,7 @@ class TSPModel7(TSPModel):
         action_prev = self.action_prev if action_prev is None else action_prev
         dist = self.distance(self.action_pprev, action_prev)
         self.loss += dist
-        return -self.loss if self.is_finish() else 0
+        return -self.loss if self.is_finish() >= 1 else 0
 
 
     def q_update(self):
@@ -382,5 +382,5 @@ class TSPModel7(TSPModel):
         Q値の更新を行う
         """
         logger.debug(f"state_prev: {self.state_prev}, action_prev: {self.action_prev}, reward_now: {self.reward_now}, state_now: {self.state_now}", color=["YELLOW"])
-        self.qfunc.store(self.state_prev, self.action_prev, self.reward_now, self.state_now, prob_actions=self.prob_actions, on_episode=(self.is_finish() == False))
+        self.qfunc.store(self.state_prev, self.action_prev, self.reward_now, self.state_now, prob_actions=self.prob_actions, on_episode=(self.is_finish() == 0))
         self.qfunc.update()
