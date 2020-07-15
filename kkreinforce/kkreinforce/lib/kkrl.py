@@ -436,6 +436,7 @@ class RLBaseNN(ActionValueFunction):
                 ndf = ndf *  prob_actions_wk
             val_max = np.nanmax(ndf)
             action  = self.index_action[np.where(ndf == val_max)[0].min()]
+            logger.debug(f'val: {ndf}, action: {action}')
             return val_max, action
     
     def store(self, state: object, action: object, reward: object, state_next: object, prob_actions: np.ndarray=None, on_episode: bool=False):

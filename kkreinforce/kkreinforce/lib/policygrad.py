@@ -18,7 +18,7 @@ class PolicyGradientNN(RLBaseNN):
             unit_memory=unit_memory, lr=lr
         )
 
-    def update_main(self, state, action, reward, state_next, prob_actions):
+    def update_main(self, state, action, reward, state_next, prob_actions, on_episode):
         """
         PolicyGradientNN の Loss 計算を行う
         """
@@ -29,8 +29,10 @@ class PolicyGradientNN(RLBaseNN):
         tens_pred = self.val_to(tens_pred)
         tens_pred = self.nn(tens_pred)
         tens_pred = tens_pred[tens_act.to(bool)] # reshape(-1) は念の為しない
-        tens_rwd  = torch.tensor(reward.astype(np.float32)).reshape(-1)
-        tens_rwd  = self.val_to(tens_rwd)
+        with torch.no_grad():
+            tens_rwd = torch.tensor(reward.astype(np.float32)).reshape(-1)
+            tens_rwd = self.val_to(tens_rwd)
+            tens_rwd = (tens_rwd - tens_rwd.mean()) / (tens_rwd.std() + 1e-9)
         loss      = torch.sum(-1 * torch.log(tens_pred) * tens_rwd)
         logger.info(f"loss: {loss}", color=["BOLD","WHITE"])
         loss.backward()

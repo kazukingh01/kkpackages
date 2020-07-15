@@ -7,6 +7,7 @@ import copy
 # local package
 from kkreinforce.lib.kkrl import RLBase, StateManager, ReplayMemory, ActionValueFunction, RLBaseNN
 from kkreinforce.lib.kknn import TorchNN
+from kkimagemods.util.common import location
 from kkimagemods.util.logger import set_logger, set_loglevel
 logger = set_logger(__name__)
 
@@ -20,14 +21,14 @@ class QTable(ActionValueFunction):
     def __init__(self, state_list: List[object], action_list: List[object], alpha: float, gamma: float):
         super().__init__()
         # Q table
-        self.q     = pd.DataFrame(np.nan, index=state_list, columns=action_list, dtype=float)
-        self.ndf   = self.q.values # 遅いので参照形式にしておく
+        self.qtable = pd.DataFrame(np.nan, index=state_list, columns=action_list, dtype=float)
+        self.ndf    = self.qtable.values # 遅いので参照形式にしておく
         # Q-learning のハイパーパラメータ
         self.alpha = alpha
         self.gamma = gamma
         # index を参照するのを高速化する辞書を予め用意しておく
-        self.dict_state  = {x:i for i, x in enumerate(self.q.index  )}
-        self.dict_action = {x:i for i, x in enumerate(self.q.columns)}
+        self.dict_state  = {x:i for i, x in enumerate(self.qtable.index  )}
+        self.dict_action = {x:i for i, x in enumerate(self.qtable.columns)}
 
 
     def get_value(self, state: object, action: object=None) -> float:
@@ -38,6 +39,7 @@ class QTable(ActionValueFunction):
         if action is None:
             # state のみを想定
             ndf = self.ndf[self.dict_state[state], :].reshape(-1).copy()
+            logger.debug(f"values: {ndf}", color=["BOLD"])
             ndf[ndf == np.nan] = 0.0
             return ndf
         else:
@@ -49,37 +51,40 @@ class QTable(ActionValueFunction):
         """
         prob_actions は action の遷移確率を表す.
         """
-        se_qvalue = self.q.iloc[self.dict_state[state], :].copy()
+        ndf_qvalue = self.get_value(state=state).copy()
         if prob_actions is not None:
             prob_actions_wk = prob_actions.astype(float).copy()
             prob_actions_wk[prob_actions_wk == 0] = np.nan 
-            se_qvalue = se_qvalue * prob_actions_wk
-        action = se_qvalue.idxmax()
-        if type(action) == np.float and np.isnan(action):
+            ndf_qvalue = ndf_qvalue * prob_actions_wk
+        action, val = None, 0
+        try:
+            action = self.qtable.columns[np.nanargmax(ndf_qvalue)]
+            val    = np.nanmax(ndf_qvalue)
+        except ValueError:
+            # All-nan の場合を想定する
+            val = 0
             if prob_actions is None:
-                action = self.q.columns[0]
+                action = self.qtable.columns[0]
             else:
-                action = self.q.columns[prob_actions > 0]
+                action = self.qtable.columns[prob_actions > 0]
                 if action.shape[0] > 0: action = action[0]
                 else: action = None
-        val = se_qvalue.max()
-        val = 0 if np.isnan(val) else val
         logger.debug(f'state: {state}, prob_actions: {prob_actions}, val: {val}, action: {action}')
         return val, action
 
 
-    def update(self, state, action, reward, state_next, prob_actions: np.ndarray=None, **kward):
+    def update(self, state, action, reward, state_next, prob_actions: np.ndarray=None, on_episode: bool=True):
         """
         Q table の更新を行う
         Q(s, a) = Q(s, a) + alpha*(r+gamma*maxQ(s')-Q(s, a))
         """
-        q     = self.get_value(state, action=action) # Q(s, a)
-        max_q = self.get_max(state_next, prob_actions=prob_actions)[0]
-        q_update = (self.alpha * (reward + (self.gamma * max_q) - q))
+        q        = self.get_value(state, action=action) # Q(s, a)
+        max_q    = self.get_max(state_next, prob_actions=prob_actions)[0] if on_episode else 0
+        q_update = reward + (self.gamma * max_q) - q
         logger.debug(f'q now: {q}, max q: {max_q}, reward: {reward}, update q: {q_update}')
 
         # 参照形式で更新する
-        self.ndf[self.dict_state[state], self.dict_action[action]] = q + q_update
+        self.ndf[self.dict_state[state], self.dict_action[action]] = q + self.alpha * q_update
 
 
 
@@ -108,11 +113,11 @@ class DQN(RLBaseNN):
 
     def to_cuda(self):
         super().to_cuda()
-        self.nn_freez.to(torch.device("cuda:0"))
+        self.nn_freez. to(torch.device("cuda:0"))
         self.criterion.to(torch.device("cuda:0"))
 
 
-    def update_main(self, state, action, reward, state_next, prob_actions):
+    def update_main(self, state, action, reward, state_next, prob_actions, on_episode):
         """
         DQN の Loss 計算を行う
         """
@@ -124,10 +129,9 @@ class DQN(RLBaseNN):
         tens_pred = self.nn(tens_pred)
         tens_pred = tens_pred * tens_act.reshape(-1, tens_pred.shape[-1]) # 3次元になることは想定しない
         with torch.no_grad():
-            # Double DQN では行動は学習中のネットワークで決定する. ただ、その行動における価値については、freez NN で決める
             tens_ans  = torch.from_numpy(state_next.astype(np.float32))
             tens_ans  = self.val_to(tens_ans)
-            tens_ans1 = self.nn(tens_ans, option=("not_first" if self.memory.unit_memory == "episode" else None))
+            tens_ans1 = self.nn(tens_ans, option=("not_first" if self.memory.unit_memory == "episode" else None)) # Double DQN では行動は学習中のネットワークで決定する
             if (prob_actions == None).sum() == 0:
                 prob_actions_wk = prob_actions.copy().astype(np.float32)
                 prob_actions_wk[prob_actions_wk == 0] = np.nan
@@ -136,9 +140,13 @@ class DQN(RLBaseNN):
                 tens_ans1 = tens_ans1 * prob_actions_wk # 3次元になることは想定しない
                 tens_ans1[torch.isnan(tens_ans1)] = float("-inf") # nan だと max で nan になるので -inf を埋める
             tens_ans0, tens_ans1 = tens_ans1.max(axis=1) # 最大となるところのindex
-            tens_ans2 = self.nn_freez(tens_ans, option=("not_first" if self.memory.unit_memory == "episode" else None))
+            tens_ans2 = self.nn_freez(tens_ans, option=("not_first" if self.memory.unit_memory == "episode" else None)) # 学習中のネットワークで決定した行動における価値は、freez NN で決める
             tens_ans2[torch.isinf(tens_ans0), :] = 0
             tens_ans  = tens_ans2[:, tens_ans1][torch.eye(tens_ans1.shape[0]).bool()]
+            ## episode の終了持は next_state が定義できないので、next_stateの価値を0にする操作を行う
+            tens_on_ep = torch.from_numpy(on_episode.astype(bool) == False)
+            tens_on_ep = self.val_to(tens_on_ep)
+            tens_ans[tens_on_ep] = 0.0
             tens_rwd  = torch.tensor(reward.astype(np.float32)).reshape(-1)
             tens_rwd  = self.val_to(tens_rwd)
             tens_max  = tens_rwd + self.gamma * tens_ans
@@ -186,11 +194,13 @@ class QLearn(RLBase):
 
     def action(self, state_now: object=None) -> object:
         # greedy選択
-        if np.random.uniform() < self.epsilon:  # random行動
+        epsilon = 0.01 + self.epsilon ** self.episode # episode に応じて最適行動をとる
+        if np.random.uniform() < epsilon:  # random行動
             action = self.action_random()
+            logger.debug(f'action: {action}, random.')
         else:
             action = self.action_best()
-        logger.debug(f'action: {action}.')
+            logger.debug(f'action: {action}, best.')
         return action
 
     def q_update(self):
@@ -201,6 +211,6 @@ class QLearn(RLBase):
         """
         logger.debug(f"state_prev: {self.state_prev}, action_prev: {self.action_prev}, reward_now: {self.reward_now}, state_now: {self.state_now}", color=["YELLOW"])
         raise NotImplementedError()
-    
+
     def train_after_step(self):
         self.q_update()

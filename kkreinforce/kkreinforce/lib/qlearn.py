@@ -7,6 +7,7 @@ import copy
 # local package
 from kkreinforce.lib.kkrl import RLBase, StateManager, ReplayMemory, ActionValueFunction, RLBaseNN
 from kkreinforce.lib.kknn import TorchNN
+from kkimagemods.util.common import location
 from kkimagemods.util.logger import set_logger, set_loglevel
 logger = set_logger(__name__)
 
@@ -128,10 +129,9 @@ class DQN(RLBaseNN):
         tens_pred = self.nn(tens_pred)
         tens_pred = tens_pred * tens_act.reshape(-1, tens_pred.shape[-1]) # 3次元になることは想定しない
         with torch.no_grad():
-            # Double DQN では行動は学習中のネットワークで決定する. ただ、その行動における価値については、freez NN で決める
             tens_ans  = torch.from_numpy(state_next.astype(np.float32))
             tens_ans  = self.val_to(tens_ans)
-            tens_ans1 = self.nn(tens_ans, option=("not_first" if self.memory.unit_memory == "episode" else None))
+            tens_ans1 = self.nn(tens_ans, option=("not_first" if self.memory.unit_memory == "episode" else None)) # Double DQN では行動は学習中のネットワークで決定する
             if (prob_actions == None).sum() == 0:
                 prob_actions_wk = prob_actions.copy().astype(np.float32)
                 prob_actions_wk[prob_actions_wk == 0] = np.nan
@@ -140,7 +140,7 @@ class DQN(RLBaseNN):
                 tens_ans1 = tens_ans1 * prob_actions_wk # 3次元になることは想定しない
                 tens_ans1[torch.isnan(tens_ans1)] = float("-inf") # nan だと max で nan になるので -inf を埋める
             tens_ans0, tens_ans1 = tens_ans1.max(axis=1) # 最大となるところのindex
-            tens_ans2 = self.nn_freez(tens_ans, option=("not_first" if self.memory.unit_memory == "episode" else None))
+            tens_ans2 = self.nn_freez(tens_ans, option=("not_first" if self.memory.unit_memory == "episode" else None)) # 学習中のネットワークで決定した行動における価値は、freez NN で決める
             tens_ans2[torch.isinf(tens_ans0), :] = 0
             tens_ans  = tens_ans2[:, tens_ans1][torch.eye(tens_ans1.shape[0]).bool()]
             ## episode の終了持は next_state が定義できないので、next_stateの価値を0にする操作を行う
@@ -211,6 +211,6 @@ class QLearn(RLBase):
         """
         logger.debug(f"state_prev: {self.state_prev}, action_prev: {self.action_prev}, reward_now: {self.reward_now}, state_now: {self.state_now}", color=["YELLOW"])
         raise NotImplementedError()
-    
+
     def train_after_step(self):
         self.q_update()

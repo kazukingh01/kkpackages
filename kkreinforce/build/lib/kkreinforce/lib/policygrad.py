@@ -11,15 +11,14 @@ logger = set_logger(__name__)
 
 class PolicyGradientNN(RLBaseNN):
     def __init__(self, 
-        torch_nn: TorchNN, action_list: List[object], 
-        batch_size: int, capacity: int, unit_memory: str=None, lr: float=0.001, **kward
+        torch_nn: TorchNN, action_list: List[object], unit_memory: str=None, lr: float=0.001, **kward
     ):
         super(PolicyGradientNN, self).__init__(
-            torch_nn, action_list, batch_size, capacity, 
+            torch_nn, action_list, batch_size=-1, capacity=float("inf"), 
             unit_memory=unit_memory, lr=lr
         )
 
-    def update_main(self, state, action, reward, state_next, prob_actions):
+    def update_main(self, state, action, reward, state_next, prob_actions, on_episode):
         """
         PolicyGradientNN の Loss 計算を行う
         """
@@ -29,10 +28,12 @@ class PolicyGradientNN(RLBaseNN):
         tens_pred = torch.from_numpy(state.astype(np.float32))
         tens_pred = self.val_to(tens_pred)
         tens_pred = self.nn(tens_pred)
-        tens_pred = tens_pred[tens_act.to(bool)]
-        tens_rwd  = torch.tensor(reward.astype(np.float32)).reshape(-1)
-        tens_rwd  = self.val_to(tens_rwd)
-        loss      = torch.sum(-torch.log(tens_pred) * tens_rwd)
+        tens_pred = tens_pred[tens_act.to(bool)] # reshape(-1) は念の為しない
+        with torch.no_grad():
+            tens_rwd = torch.tensor(reward.astype(np.float32)).reshape(-1)
+            tens_rwd = self.val_to(tens_rwd)
+            tens_rwd = (tens_rwd - tens_rwd.mean()) / (tens_rwd.std() + 1e-9)
+        loss      = torch.sum(-1 * torch.log(tens_pred) * tens_rwd)
         logger.info(f"loss: {loss}", color=["BOLD","WHITE"])
         loss.backward()
         self.optimizer.step()
@@ -40,7 +41,6 @@ class PolicyGradientNN(RLBaseNN):
 
 
 class PolicyGradient(RLBase):
-
     def __init__(self, policy: PolicyGradientNN, list_action: List[str], gamma: float=0.95, capacity: int=100):
         super(PolicyGradient, self).__init__()
         self.policy = policy
@@ -68,9 +68,11 @@ class PolicyGradient(RLBase):
         self.memory = ReplayMemory(float("inf"))
 
     def train_after_step(self):
-        self.memory.push(self.state_prev, self.action_prev, self.reward_now, self.state_now, None, on_episode=(self.is_finish() == False))
+        self.memory.push(self.state_prev, self.action_prev, self.reward_now, self.state_now, None, on_episode=(self.is_finish() == 0))
 
     def train_after_episode(self):
+        # 最新の方策で学習させる必要があるので、memory を reset する
+        self.policy.memory.reset()
         # reward を計算し直して格納する
         reward = np.array(Transition(*zip(* self.memory.memory)).reward)
         for i, trans in enumerate(self.memory.memory):

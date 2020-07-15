@@ -49,7 +49,7 @@ class RLBase(object):
 
     def state(self, state_prev: object=None, action_prev: object=None) -> object:
         """
-        state_prevからpolicyに従ったactionを行い、次のstateを決定する
+        state_prevとaction_prevから状態遷移確率に従い、次のstateを決定する
         """
         state_prev  = self.state_prev  if state_prev  is None else state_prev 
         action_prev = self.action_prev if action_prev is None else action_prev
@@ -95,7 +95,7 @@ class RLBase(object):
         self.step += 1 # step を加算する
         self.transition_after_all()
 
-    def is_finish(self) -> bool:
+    def is_finish(self)  -> int:
         """
         episode の終了判定を実装する
         """
@@ -116,7 +116,7 @@ class RLBase(object):
             logger.info(f"episode: {self.episode}", color=["BOLD", "BLUE"])
             self.init()
             self.train_before_episode()
-            while self.is_finish() == False:
+            while self.is_finish() == 0:
                 self.train_before_step()
                 self.transition()
                 self.train_after_step()
@@ -144,11 +144,13 @@ class StateManager(object):
                 count += self.dict_state[x]["nclass"]
             elif self.dict_state[x]["type"] == "onehot_binary":
                 count += self.dict_state[x]["nclass"]
+            elif self.dict_state[x]["type"] == "numeric_bins":
+                count += self.dict_state[x]["nclass"]
             else:
                 count += 1
         return count
     
-    def set_state(self, name: str, state_type: str, state_list: List[object] = None):
+    def set_state(self, name: str, state_type: str, state_list: List[object] = None, options: dict = {}):
         """
         Params::
             name: state の名称
@@ -159,9 +161,15 @@ class StateManager(object):
         self.list_names.append(name)
         state = {}
         state["type"]   = state_type
-        state["state"]  = {x:i for i, x in enumerate(state_list)} if state_list is not None else {}
-        state["index"]  = {i:x for i, x in enumerate(state_list)} if state_list is not None else {}
-        state["nclass"] = len(state_list) if state_list is not None else 0
+        if state_type == "numeric_bins":
+            bins    = np.linspace(options["bin_min"], options["bin_max"], options["bins"])
+            state["state"]  = bins
+            state["index"]  = lambda x: np.digitize(x, bins)
+            state["nclass"] = len(bins) + 1
+        else:
+            state["state"]  = {x:i for i, x in enumerate(state_list)} if state_list is not None else {}
+            state["index"]  = {i:x for i, x in enumerate(state_list)} if state_list is not None else {}
+            state["nclass"] = len(state_list) if state_list is not None else 0
         state["value"]  = False if state_type == "binary" else None
         self.dict_state[name] = state
     
@@ -176,6 +184,8 @@ class StateManager(object):
                 listwk.append(list(self.dict_state[x]["state"].values()))
             elif self.dict_state[x]["type"] == "binary":
                 listwk.append([0, 1])
+            elif self.dict_state[x]["type"] == "numeric_bins":
+                listwk.append(np.arange(0, self.dict_state[x]["nclass"]).tolist())
             elif self.dict_state[x]["type"] == "onehot":
                 raise Exception(f'We can not calculate {self.dict_state[x]["type"]} type.')
             elif self.dict_state[x]["type"] == "numeric":
@@ -215,6 +225,8 @@ class StateManager(object):
     def set_value(self, name: str, value: object):
         if   self.dict_state[name]["type"] == "numeric":
             self.dict_state[name]["value"] = value
+        elif self.dict_state[name]["type"] == "numeric_bins":
+            self.dict_state[name]["value"] = self.dict_state[name]["index"](value) # callable function.(lambda x)
         elif self.dict_state[name]["type"] == "list":
             self.dict_state[name]["value"] = self.dict_state[name]["state"][value]
         elif self.dict_state[name]["type"] == "onehot":
@@ -243,7 +255,7 @@ class StateManager(object):
 
 
 
-Transition = namedtuple('Transition',('state', 'action', 'reward', 'state_next', 'prob_actions'))
+Transition = namedtuple('Transition',('state', 'action', 'reward', 'state_next', 'prob_actions', 'on_episode'))
 class ReplayMemory(object):
 
     def __init__(self, capacity: int, unit_memory: str=None, memory_best: bool=False):
@@ -259,18 +271,18 @@ class ReplayMemory(object):
 
     def push(self, *args, on_episode=False):
         """
-        Saves a transition. consider episode. 
+        Saves a transition. consider episode.
         """
         if self.unit_memory is None:
             if len(self.memory) < self.capacity:
                 self.memory.append(None)
-            self.memory[self.position] = copy.deepcopy(Transition(*args))
+            self.memory[self.position] = copy.deepcopy(Transition(*args, on_episode))
             self.position = self.position + 1
             if self.capacity != float("inf"):
                 self.position = self.position % self.capacity
         elif self.unit_memory == "episode":
             #  episode 単位のまとまりで、memory に保存する
-            self.memory_in_episode.append(copy.deepcopy(Transition(*args)))
+            self.memory_in_episode.append(copy.deepcopy(Transition(*args, on_episode)))
             if on_episode == False:
                 if len(self.memory) < self.capacity:
                     self.memory.append(None)
@@ -291,13 +303,16 @@ class ReplayMemory(object):
         # indexes が指定されたらそっちを優先する
         transitions = None
         if indexes is None:
-            transitions = random.sample(self.memory, batch_size)
+            if batch_size < 0 or batch_size > len(self.memory):
+                transitions = random.sample(self.memory, len(self.memory))
+            else:
+                transitions = random.sample(self.memory, batch_size)
         else:
             transitions = []
             for x in indexes: transitions.append(self.memory[x])
         if self.unit_memory is None:
             batch = Transition(*zip(* transitions))
-            return np.array(batch.state), np.array(batch.action), np.array(batch.reward), np.array(batch.state_next), np.array(batch.prob_actions)
+            return np.array(batch.state), np.array(batch.action), np.array(batch.reward), np.array(batch.state_next), np.array(batch.prob_actions), np.array(batch.on_episode)
         elif self.unit_memory == "episode":
             # best episode を強制追加
             #transitions.append(self.memory[0])
@@ -306,11 +321,16 @@ class ReplayMemory(object):
             reward       = np.array([[x.reward       for x in episode] for episode in transitions])
             state_next   = np.array([[x.state_next   for x in episode] for episode in transitions])
             prob_actions = np.array([[x.prob_actions for x in episode] for episode in transitions])
+            on_episode   = np.array([[x.on_episode   for x in episode] for episode in transitions])
             ## LSTMで扱えるようにepisodeの順番を記憶しているが、state_nextには最初の状態が抜けているため、そこを補間してやる
             state_next   = np.insert(state_next, 0, state[::,0].copy(), axis=1)
-            return  state, action, reward, state_next, prob_actions
+            return  state, action, reward, state_next, prob_actions, on_episode
         else:
             raise Exception(f"We don't consider this unit: {self.unit_memory}")
+
+    def reset(self):
+        self.memory   = []
+        self.position = 0
 
     def __len__(self):
         return len(self.memory)
@@ -394,6 +414,7 @@ class RLBaseNN(ActionValueFunction):
             values = torch.from_numpy(values.astype(np.float32).reshape(1, *values.shape)) # 次元を1つ上げる
             values = self.val_to(values)
             tens  = self.nn(values, option=("last" if self.memory.unit_memory == "episode" else None))
+            logger.debug(f"values: {tens}", color=["BOLD"])
             if action is None:
                 return tens.detach().to("cpu").numpy()[-1]
             else:
@@ -415,6 +436,7 @@ class RLBaseNN(ActionValueFunction):
                 ndf = ndf *  prob_actions_wk
             val_max = np.nanmax(ndf)
             action  = self.index_action[np.where(ndf == val_max)[0].min()]
+            logger.debug(f'val: {ndf}, action: {action}')
             return val_max, action
     
     def store(self, state: object, action: object, reward: object, state_next: object, prob_actions: np.ndarray=None, on_episode: bool=False):
@@ -424,15 +446,15 @@ class RLBaseNN(ActionValueFunction):
         """
         NN の back propagation
         """
-        if len(self.memory) < self.batch_size: return None
+        if self.batch_size > 0 and len(self.memory) < self.batch_size: return None
         # Replay Memory から sample を random に取り出す
         ## episode 単位で保存されている場合は、ndarray[[state], [state], ..] になっている
-        state, action, reward, state_next, prob_actions = self.memory.sample(self.batch_size)
+        state, action, reward, state_next, prob_actions, on_episode = self.memory.sample(self.batch_size)
         self.nn.train() # train() と eval() は Dropout があるときに区別する必要がある
         self.nn.zero_grad() # 勾配を初期化
-        self.update_main(state, action, reward, state_next, prob_actions)
+        self.update_main(state, action, reward, state_next, prob_actions, on_episode)
 
-    def update_main(self, state, action, reward, state_next, prob_actions):
+    def update_main(self, state, action, reward, state_next, prob_actions, on_episode):
         """
         loss の計算を行い、loss.backward() まで実装する
         """

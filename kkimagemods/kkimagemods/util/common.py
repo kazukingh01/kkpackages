@@ -1,5 +1,5 @@
 from typing import List, Tuple
-import sys, os, glob, re, shutil, pickle, datetime
+import sys, os, glob, re, shutil, pickle, datetime, inspect
 
 def is_callable(class_: object, func_: str, list_index=None) -> bool:
     """ 関数がコールできるかどうかを調べる """
@@ -128,3 +128,8 @@ def basename_url(url: str) -> str:
 
 def get_filename(path: str):
     return ".".join(path.split(".")[:-1])
+
+def location(depth=0) -> (str, str, int):
+    frame = inspect.currentframe().f_back
+    return os.path.basename(frame.f_code.co_filename), frame.f_code.co_name, frame.f_lineno
+
