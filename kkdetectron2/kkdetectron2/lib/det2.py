@@ -1,4 +1,4 @@
-import os, datetime, copy
+import os, datetime, copy, time
 import numpy as np
 import pandas as pd
 import cv2
@@ -7,11 +7,12 @@ import torch
 
 # detectron2
 import detectron2
-from detectron2.engine import DefaultTrainer, DefaultPredictor
+from detectron2.engine import DefaultTrainer, DefaultPredictor, HookBase
 from detectron2.data import build_detection_train_loader, DatasetCatalog, MetadataCatalog
 from detectron2.data.datasets import register_coco_instances
 from detectron2.config import get_cfg
 from detectron2 import model_zoo
+import detectron2.utils.comm as comm
 from detectron2.utils.visualizer import Visualizer
 from detectron2.utils.visualizer import ColorMode
 from detectron2.utils.logger import setup_logger
@@ -37,8 +38,9 @@ class MyDet2(DefaultTrainer):
             # coco dataset
             dataset_name: str = None, coco_json_path: str=None, image_root: str=None,
             # train params
-            cfg=None, max_iter: int=100, is_train: bool=True, aug_json_file_path: str=None, 
-            base_lr: float=0.01, num_workers: int=2, resume: bool=False, 
+            cfg: CfgNode=None, max_iter: int=100, is_train: bool=True, aug_json_file_path: str=None, 
+            base_lr: float=0.01, num_workers: int=2, resume: bool=False, lr_steps: (int,int,)=None,
+            validations: List[Tuple[str]]=None,
             # train and test params
             model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", weight_path: str=None, 
             classes: List[str] = None, keypoint_names: List[str] = None, keypoint_flip_map: List[Tuple[str]] = None,
@@ -51,10 +53,10 @@ class MyDet2(DefaultTrainer):
         self.coco_json_path_org = coco_json_path
         self.image_root         = image_root
         self.is_train           = is_train
-        self.__register_coco_instances() # Coco dataset setting
+        self.__register_coco_instances(self.dataset_name, self.coco_json_path, self.image_root) # Coco dataset setting
         self.cfg                = cfg if cfg is not None else self.set_config(
             weight_path=weight_path, threshold=threshold, max_iter=max_iter, num_workers=num_workers, 
-            base_lr=base_lr, input_size=input_size, outdir=outdir
+            base_lr=base_lr, lr_steps=lr_steps, input_size=input_size, outdir=outdir
         )
         # classes は強制でセットする
         self.cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(classes)
@@ -74,15 +76,31 @@ class MyDet2(DefaultTrainer):
             self.predictor = None
             self.resume_or_load(resume=resume) # Falseだとload the model specified by the config (skip all checkpointables).
 
+            # validation setting
+            if validations is not None:
+                list_validator: list = []
+                for valid in validations:
+                    self.__register_coco_instances(*valid) # valid: (dataset_name, json_path, image_path)
+                    MetadataCatalog.get(valid[0]).thing_classes = classes
+                    if keypoint_names is not None:
+                        self.cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = len(keypoint_names)
+                        # Key point の metadata を set
+                        MetadataCatalog.get(valid[0]).keypoint_names = keypoint_names
+                        MetadataCatalog.get(valid[0]).keypoint_flip_map = keypoint_flip_map
+                        MetadataCatalog.get(valid[0]).keypoint_connection_rules = [(x[0], x[1], (255,0,0)) for x in keypoint_flip_map] # Visualizer の内部で使用している
+                    list_validator.append(Validator(self.cfg.clone(), valid[0], trainer=self, steps=100, ndata=10))
+                self.register_hooks(list_validator) # Hook の登録. after_stepがtrain中に呼び出される
+ 
         # この定義は最後がいいかも
         if self.is_train == False:
             # test setting
             self.set_predictor()
 
 
-    def __register_coco_instances(self):
+    @classmethod
+    def __register_coco_instances(cls, dataset_name: str, coco_json_path: str, image_root: str):
          # この関数で内部のDatasetCatalog, MetadataCatalogにCoco情報をset している
-        register_coco_instances(self.dataset_name, {}, self.coco_json_path, self.image_root)
+        register_coco_instances(dataset_name, {}, coco_json_path, image_root)
 
 
     # override. super().__init__ 内でこの関数が呼ばれる
@@ -92,7 +110,7 @@ class MyDet2(DefaultTrainer):
 
     def set_config(
         self, weight_path: str=None, threshold: float=0.2, max_iter: int=100, num_workers: int=2, 
-        base_lr: float=0.01, input_size: tuple=(800,1333,), outdir: str="./output"
+        base_lr: float=0.01, lr_steps: (int,int)=None, input_size: tuple=(800,1333,), outdir: str="./output"
     ) -> CfgNode:
         """
         see https://detectron2.readthedocs.io/modules/config.html#detectron2.config.CfgNode
@@ -115,6 +133,8 @@ class MyDet2(DefaultTrainer):
         if self.is_train:
             cfg.SOLVER.BASE_LR = base_lr # pick a good LR
             cfg.SOLVER.MAX_ITER = max_iter    # 300 iterations seems good enough for this toy dataset; you may need to train longer for a practical dataset
+            if lr_steps is not None:
+                cfg.SOLVER.STEPS = tuple(lr_steps)
         return cfg
 
 
@@ -147,9 +167,7 @@ class MyDet2(DefaultTrainer):
         return output_list
 
 
-    def show(self, img: np.ndarray, add_padding: int=0, preview: bool=False) -> np.ndarray:
-        from detectron2.data import MetadataCatalog
-        metadata = MetadataCatalog.get(self.dataset_name)
+    def show(self, img: np.ndarray, add_padding: int=0, only_best: bool = False, preview: bool=False) -> np.ndarray:
         output   = self.predict(img)
         for i in range(output["instances"].get("pred_boxes").tensor.shape[0]):
             for j in range(4):
@@ -160,17 +178,26 @@ class MyDet2(DefaultTrainer):
                 img, add_padding, add_padding, add_padding, add_padding,
                 cv2.BORDER_CONSTANT, value=[0, 0, 0]
             )
-        v = Visualizer(
-            img[:, :, ::-1],
-            metadata=metadata, 
-            scale=0.6, 
-            instance_mode=None #ColorMode.IMAGE_BW # remove the colors of unsegmented pixels
-        )
-        v = v.draw_instance_predictions(output["instances"].to("cpu"))
-        img_ret = v.get_image()[:, :, ::-1]
+        if only_best:
+            output["instances"] = output["instances"][0:1]
+        img_ret = self.draw_annoetation(img, output)
         if preview:
             cv2.imshow(__name__, img_ret)
             cv2.waitKey(0)
+        return img_ret
+
+
+    def draw_annoetation(self, img: np.ndarray, data: dict):
+        from detectron2.data import MetadataCatalog
+        metadata = MetadataCatalog.get(self.dataset_name)
+        v = Visualizer(
+            img[:, :, ::-1],
+            metadata=metadata, 
+            scale=1.0, 
+            instance_mode=None #ColorMode.IMAGE_BW # remove the colors of unsegmented pixels
+        )
+        v = v.draw_instance_predictions(data["instances"].to("cpu"))
+        img_ret = v.get_image()[:, :, ::-1]
         return img_ret
 
 
@@ -264,15 +291,14 @@ class MyDet2(DefaultTrainer):
 
 
     @classmethod
-    def show_output_dataloader(cls, data):
+    def img_conv_dataloader(cls, data):
         """
         dataloader で読み出した画像を解釈するためのクラス
         """
         img = data["image"].detach().numpy().copy().T.astype(np.uint8)
         img = np.rot90(img, 1)
         img = np.flipud(img)
-        bbox_list = data["instances"].get("gt_boxes").tensor.numpy().copy()
-        return drow_bboxes(img, bbox_list.tolist(), bbox_type="xy")
+        return img
 
 
     def preview_augmentation(self, src, outdir: str="./preview_augmentation", n_output: int=100):
@@ -302,14 +328,23 @@ class MyDet2(DefaultTrainer):
         self.coco_json_path = self.coco_json_path + ".cocomanager.json"
         del DatasetCatalog. _REGISTERED[  self.dataset_name] # key を削除しないと再登録できない
         del MetadataCatalog._NAME_TO_META[self.dataset_name] # key を削除しないと再登録できない
-        self.__register_coco_instances()
+        self.__register_coco_instances(self.dataset_name, self.coco_json_path, self.image_root)
         super().__init__(self.cfg)
         makedirs(outdir, exist_ok=True, remake=True)
         count = 0
         for i, x in enumerate(self.data_loader):
+            # x には per batch 分の size (2個とか) 入っているので、それ分回す
             for j, data in enumerate(x):
-                # x には per batch 分の size (2個とか) 入っているので、それ分回す
-                img = self.show_output_dataloader(data)
+                if j > 0: continue
+                ## Visualizer を predictor と統一するため, gt_*** -> pred_*** に copy する
+                img = self.img_conv_dataloader(data)
+                ins = data["instances"].to("cpu")
+                if ins.has("gt_boxes"):     ins.set("pred_boxes",     ins.gt_boxes)
+                if ins.has("gt_classes"):   ins.set("pred_classes",   ins.gt_classes)
+                if ins.has("gt_keypoints"): ins.set("pred_keypoints", ins.gt_keypoints)
+                if ins.has("gt_masks"):     ins.set("pred_masks",     ins.gt_masks)
+                data["instances"] = ins
+                img = self.draw_annoetation(img, data)
                 cv2.imwrite(outdir + "preview_augmentation." + str(i) + "." + str(j) + ".png", img)
             count += 1
             if count > n_output: break
@@ -317,7 +352,7 @@ class MyDet2(DefaultTrainer):
         del DatasetCatalog. _REGISTERED[  self.dataset_name] # key を削除しないと再登録できない
         del MetadataCatalog._NAME_TO_META[self.dataset_name] # key を削除しないと再登録できない
         self.coco_json_path = self.coco_json_path_org
-        self.__register_coco_instances()
+        self.__register_coco_instances(self.dataset_name, self.coco_json_path, self.image_root)
         super().__init__(self.cfg)
     
 
@@ -348,6 +383,43 @@ class MyDet2(DefaultTrainer):
                 dfwk = pd.DataFrame([x], columns=["image_path"])
             df = pd.concat([df, dfwk], ignore_index=True, sort=False)
         return df
+
+
+
+class Validator(HookBase):
+    def __init__(self, cfg: CfgNode, dataset_name: str, trainer: DefaultTrainer, steps: int=10, ndata: int=5):
+        super().__init__()
+        self.cfg = cfg.clone()
+        self.cfg.DATASETS.TRAIN = (dataset_name, )
+        self._loader = iter(build_detection_train_loader(self.cfg))
+        self.trainer: DefaultTrainer = trainer
+        self.steps = steps
+        self.ndata = ndata
+        self.loss_dict = {}
+        
+    def before_step(self):
+        # before に入れないと、after step の後の storage.step で storage._latest~~ が初期化されてしまう
+        self.trainer._write_metrics(self.loss_dict)
+
+    def after_step(self):
+        if self.trainer.iter > 0 and self.trainer.iter % self.steps == 0:
+            list_dict = []
+            for _ in range(self.ndata):
+                data = next(self._loader)
+                self.dataaa = data
+                with torch.no_grad():
+                    loss_dict = self.trainer.model(data)
+                    list_dict.append({
+                        k: v.detach().cpu().item() if isinstance(v, torch.Tensor) else float(v)
+                        for k, v in loss_dict.items()
+                    })
+            loss_dict = {}
+            for key in list_dict[0].keys():
+                loss_dict[key] = np.mean([dictwk[key] for dictwk in list_dict])
+            loss_dict = {
+                self.cfg.DATASETS.TRAIN[0] + "_" + k: v.item() for k, v in comm.reduce_dict(loss_dict).items()
+            }
+            self.loss_dict = loss_dict
 
 
 

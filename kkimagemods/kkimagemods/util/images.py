@@ -7,6 +7,7 @@ from typing import List, Tuple
 # local lib
 from kkimagemods.util.common import check_type, get_file_list, correct_dirpath, makedirs
 
+
 def drow_bboxes(img_org: np.ndarray, bboxes: List[List[float]], bboxes_class: List[str]=None, bbox_type="wh", color=(0,255,0), thickness: int=1, font_scale: float=1.0):
     """
     bbox を加えて描画していく
