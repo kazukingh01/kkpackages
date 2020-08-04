@@ -111,6 +111,7 @@ class Ndds2Coco:
         self, dirpath: str, n_files: int = 100, 
         instance_merge: dict = None, bboxes: dict=None,
         keypoints: dict = None, keypoints_merge: dict = None,
+        segmentations: dict = None,
         visibility_threshold = 0.2, extra_pixel_x: int = 0, extra_pixel_y: int = 0, 
         convert_mode: str = "is"
     ):
@@ -136,7 +137,28 @@ class Ndds2Coco:
             >>> ndds_to_coco = Ndds2Coco()
             >>> ndds_to_coco.set_base_parameter(
                     "~/my_ndds_output_path", n_files=100, 
-                    instance_merge={"human1":["body1","shoes1","clothes1", ...], "human2":["body2","shoes2","clothes2", ...], "dog1":["dog_body1", "dog_collars1"]}, 
+                    instance_merge={
+                        "human1":["body1","shoes1","clothes1", ...], 
+                        "human2":["body2","shoes2","clothes2", ...], 
+                        "dog1":["dog_body1", "dog_collars1"]
+                    }, 
+                    bboxes={
+                        "human1":"bbox_human"
+                    },
+                    keypoints={
+                        "hook":{
+                            "kpt_a" :[{"name":"kpt_a",  "type":"center"}],
+                            "kpt_cb":[{"name":"kpt_cb", "type":"center"}],
+                            "kpt_c" :[{"name":"kpt_c",  "type":"center"}],
+                            "kpt_cd":[{"name":"kpt_cb", "type":"center"}],
+                            "kpt_e" :[{"name":"kpt_e",  "type":"center"}],
+                        },
+                    },
+                    segmentation={
+                        "hook":{
+                            "name": "bbox_human", "type": "inbox"
+                        }
+                    },
                     visibility_threshold = 0.2
                     )
         """
@@ -146,6 +168,7 @@ class Ndds2Coco:
         self.bboxes = bboxes
         self.keypoints = keypoints
         self.keypoints_merge = keypoints_merge
+        self.segmentations = segmentations
         if self.convert_mode == "cs":
             df = pd.DataFrame()
 
@@ -337,7 +360,21 @@ class Ndds2Coco:
             if x is None: raise Exception("bbox is null.")
             se["bbox"] = (x,y,w,h,)
             ## segmmentation の処理
-            contours = cv2.findContours(ndf, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]
+            ndf_seg = ndf.copy()
+            if self.segmentations is not None and self.segmentations.get(name) is not None:
+                seginfo = self.segmentations.get(name)
+                for _object in fjson["objects"]:
+                    if _object["class"] == seginfo["name"]:
+                        if seginfo["type"] == "inbox":
+                            p1 = _object["bounding_box"]["top_left"][::-1] #y,xになっているので、x,yに入れ替える
+                            p2 = _object["bounding_box"]["bottom_right"][::-1] #y,xになっているので、x,yに入れ替える
+                            ndf_seg_bool = np.zeros_like(ndf_seg).astype(bool)
+                            ndf_seg_bool[int(p1[1]):int(p2[1]+1), int(p1[0]):int(p2[0]+1)] = True
+                            ndf_seg[~ndf_seg_bool] = 0
+                        else:
+                            raise Exception(f'unexpected type: {seginfo["type"]}')
+
+            contours = cv2.findContours(ndf_seg, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]
             se["segmentation"] = [contour.reshape(-1) for contour in contours]
             ## keypoint の処理
             se_key    = pd.Series(dtype=object)
@@ -641,7 +678,10 @@ class CocoManager:
             logger.warning(f"same file name: [{se[se.apply(lambda x: len(x) > 1)].index.values}]")
 
 
-    def re_index(self, check_file_exist_dir: str=None):
+    def re_index(
+        self, check_file_exist_dir: str=None, 
+        keypoints: List[str]=None, skeleton: List[List[str]]=None
+    ):
         # ファイルが存在しなければcoco から外す
         if check_file_exist_dir is not None:
             filelist = [os.path.basename(x) for x in get_file_list(check_file_exist_dir)]
@@ -649,8 +689,8 @@ class CocoManager:
 
         # coco format に足りないカラムがあれば追加する
         for name, default_value in zip(
-            ["categories_keypoints", "categories_skeleton"], 
-            [[], [], ]
+            ["categories_keypoints", "categories_skeleton", "licenses_name"], 
+            [[], [], np.nan]
         ):
             if (self.df_json.columns == name).sum() == 0:
                 self.df_json[name] = [default_value for _ in np.arange(self.df_json.shape[0])]
@@ -665,6 +705,8 @@ class CocoManager:
         self.df_json["images_license"] = self.df_json["licenses_name"].map(dictwk)
         self.df_json["licenses_id"]    = self.df_json["licenses_name"].map(dictwk)
         # category id ( super category と category name で一意とする )
+        if self.df_json.columns.isin(["categories_supercategory"]).sum() == 0:
+            self.df_json["categories_supercategory"] = self.df_json["categories_name"].copy()
         self.df_json["__work"] = (self.df_json["categories_supercategory"].astype(str) + "_" + self.df_json["categories_name"].astype(str)).copy()
         dictwk = {x:i  for i, x in enumerate(np.sort(self.df_json["__work"].unique()))}
         self.df_json["annotations_category_id"] = self.df_json["__work"].map(dictwk)
@@ -673,6 +715,41 @@ class CocoManager:
         # annotations id ( df の index に相当する)
         self.df_json = self.df_json.reset_index(drop=True)
         self.df_json["annotations_id"] = self.df_json.index.values
+        # Keypoint の統合
+        if keypoints is not None:
+            self.df_json["annotations_keypoints"] = self.df_json.apply(
+                lambda x: np.array(
+                    [x["annotations_keypoints"][np.where(np.array(x["categories_keypoints"]) == y)[0].min()*3:np.where(np.array(x["categories_keypoints"]) == y)[0].min()*3+3]
+                    if y in x["categories_keypoints"] else [0,0,0] for y in keypoints]
+                ).reshape(-1).tolist(), axis=1
+            )
+            self.df_json["categories_keypoints"] = self.df_json["categories_keypoints"].apply(lambda x: keypoints)
+            skeleton = np.array(skeleton).copy()
+            for i, x in enumerate(keypoints):
+                skeleton[skeleton == x] = i
+            skeleton = skeleton.astype(int)
+            self.df_json["categories_skeleton"] = self.df_json["categories_skeleton"].apply(lambda x: skeleton.tolist())
+
+
+    def organize_segmentation(self):
+        """
+        Segmentation の annotation を使って augmentation をする場合、
+        変な annotation になっているとエラーが発生するため、整理する
+        """
+        ndf_json  = self.df_json.values.copy()
+        index_seg = np.where(self.df_json.columns == "annotations_segmentation")[0].min()
+        index_w   = np.where(self.df_json.columns == "images_width")[0].min()
+        index_h   = np.where(self.df_json.columns == "images_height")[0].min()
+        for i, (h, w, list_seg,) in enumerate(ndf_json[:, [index_h, index_w, index_seg]]):
+            ndf = np.zeros((int(h), int(w), 3)).astype(np.uint8)
+            re_seg = []
+            for seg in list_seg:
+                # segmentation を 線を繋いで描く
+                ndf = cv2.polylines(ndf, [np.array(seg).reshape(-1,1,2).astype(np.int32)], True, (255,255,255))
+                # 線を描いた後、一番外の輪郭を取得する
+                contours, _ = cv2.findContours(ndf[:, :, 0], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+                re_seg.append(contours[0].reshape(-1).astype(int).tolist())
+            ndf_json[i, index_seg] = re_seg
 
 
     def add_json(self, src, root_image: str=None):
@@ -681,7 +758,7 @@ class CocoManager:
         if   type(src) == str:  json_coco = json.load(open(src))
         elif type(src) == dict: json_coco = src
         self.json = json_coco.copy()
-        if len(json_coco["licenses"]) == 0:
+        if json_coco.get("licenses") is None or len(json_coco["licenses"]) == 0:
             json_coco["licenses"] = [{'url': 'http://test', 'id': 0, 'name': 'test license'}]
         try:
             self.coco_info = json_coco["info"]
@@ -745,7 +822,7 @@ class CocoManager:
             makedirs(save_images_path, exist_ok = exist_ok, remake = remake)
             # 同名ファイルはrename する
             dfwk = self.df_json.groupby(["images_file_name","images_coco_url"]).size().reset_index()
-            dfwk["images_file_name"] = dfwk.groupby("images_file_name")["images_file_name"].apply(lambda x: pd.Series([get_filename(y)+"."+str(i)+".png" for i, y in enumerate(x)]) if x.shape[0] > 1 else x).values
+            dfwk["images_file_name"] = dfwk.groupby("images_file_name")["images_file_name"].apply(lambda x: pd.Series([get_filename(y)+"."+str(i)+"."+y.split(".")[-1] for i, y in enumerate(x)]) if x.shape[0] > 1 else x).values
             self.df_json["images_file_name"] = self.df_json["images_coco_url"].map(dfwk.set_index("images_coco_url")["images_file_name"].to_dict())
             # image copy
             for x, y in dfwk[["images_coco_url", "images_file_name"]].values:
@@ -781,8 +858,8 @@ class CocoManager:
             imgwk = np.zeros_like(img)
             for listwk in se["annotations_segmentation"]:
                 seg = np.array(listwk)
-                img   = cv2.polylines(img,[seg.reshape(-1,1,2)],True,(0,0,0))
-                imgwk = cv2.fillConvexPoly(imgwk, points=seg.reshape(-1, 2), color=(255,0,0))
+                img   = cv2.polylines(img,[seg.reshape(-1,1,2).astype(np.int32)],True,(0,0,0))
+                imgwk = cv2.fillConvexPoly(imgwk, points=seg.reshape(-1, 2).astype(np.int32), color=(255,0,0))
             img = cv2.addWeighted(img, 1, imgwk, 0.8, 0)
             # keypoint の描画
             ann_key_pnt = np.array(se["annotations_keypoints"]).reshape(-1, 3).astype(int)
@@ -806,6 +883,7 @@ class CocoManager:
         outdir = correct_dirpath(outdir)
         makedirs(outdir, exist_ok=exist_ok, remake=remake)
         for x in self.df_json["images_file_name"].unique():
+            logger.info(f"write coco annotation in image: {x}")
             img = self.draw_infomation(x, imgpath=imgpath, is_show=False, is_anno_name=is_anno_name)
             cv2.imwrite(outdir + x, img)
 
@@ -1035,3 +1113,96 @@ class CocoManager:
         self.save(path_json_valid)
         # 元に戻す
         self.df_json = df
+
+
+
+class Labelme2Coco:
+
+    def __init__(
+        self, dirpath_json: str, dirpath_img: str, 
+        categories_name: List[str], keypoints: List[str] = None, 
+        keypoints_belong: dict=None, skelton: List[List[str]] = None
+    ):
+        self.dirpath_json = correct_dirpath(dirpath_json)
+        self.dirpath_img  = correct_dirpath(dirpath_img)
+        self.categories_name      = categories_name
+        self.index_categories_name = {x:i for i, x in enumerate(categories_name)}
+        self.keypoints = keypoints
+        self.keypoints_belong = keypoints_belong
+        self.index_keypoints = {x:i for i, x in enumerate(keypoints)}
+        self.skelton   = skelton
+
+
+    def read_json(self, json_path: str) -> pd.DataFrame:
+        """
+        CocoManager と互換性を取れるような DataFrame を作成する
+        """
+        logger.info(f"read json file: {json_path}")
+        fjson = json.load(open(json_path))
+        fname = self.dirpath_img + os.path.basename(fjson["imagePath"])
+        img   = cv2.imread(fname)
+
+        # labelme json dataframe 化する
+        df = pd.DataFrame()
+        df_json = pd.DataFrame(fjson["shapes"])
+        for i, (label, points, shape_type) in enumerate(df_json[df_json["shape_type"].isin(["polygon","rectangle"])][["label","points","shape_type"]].values):
+            if self.index_categories_name.get(label) is None: continue
+            se = pd.Series(dtype=object)
+            se["images_license"]   = 0
+            se["images_file_name"] = os.path.basename(fjson["imagePath"])
+            se["images_coco_url"]  = fname
+            se["images_height"]    = img.shape[0]
+            se["images_width"]     = img.shape[1]
+            se["images_date_captured"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            se["images_flickr_url"] = None
+            se["images_id"]               = 0 # dummy
+            se["annotations_image_id"]    = 0 # dummy
+            se["annotations_category_id"] = i
+            ## bbox, segmentation
+            if   shape_type == "rectangle":
+                [[x1, y1], [x2, y2]] = points
+                se["annotations_bbox"] = [int(x1), int(y1), int(x2-x1), int(y2-y1)]
+                se["annotations_segmentation"] = []
+                se["annotations_area"] = 0
+            elif shape_type == "polygon":
+                ndf = np.zeros_like(img).astype(np.uint8)
+                ndf = cv2.polylines(ndf, [np.array(points).reshape(-1,1,2).astype(np.int32)], True, (255,0,0))
+                contours = cv2.findContours(ndf[:, :, 0], cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]
+                x,y,w,h = cv2.boundingRect(contours[0])
+                se["annotations_bbox"] = [int(x), int(y), int(w), int(h)]
+                se["annotations_segmentation"] = [np.array(points).reshape(-1).astype(int).tolist()]
+                se["annotations_area"] = cv2.contourArea(contours[0])                
+            ## keypoint
+            list_kpt  = self.keypoints_belong[label] if self.keypoints_belong is not None else self.keypoints # あるlabelが所属するkptを定義する
+            dfwk      = df_json[(df_json["shape_type"] == "point") & (df_json["label"].isin(list_kpt))].copy()
+            dfwk["x"] = dfwk["points"].map(lambda x: x[0][0])
+            dfwk["y"] = dfwk["points"].map(lambda x: x[0][1])
+            dfwk      = dfwk.loc[((dfwk["x"] >= x1) & (dfwk["x"] <= x2) & (dfwk["y"] >= y1) & (dfwk["y"] <= y2)), :]
+            ndf = np.zeros(0)
+            for keyname in self.keypoints:
+                dfwkwk = dfwk[dfwk["label"] == keyname]
+                if dfwkwk.shape[0] > 0:
+                    sewk = dfwkwk.iloc[0]
+                    ndf = np.append(ndf, (sewk["x"], sewk["y"], 2,))
+                else:
+                    ndf = np.append(ndf, (0, 0, 0,))
+            se["annotations_keypoints"]     = ndf.reshape(-1).tolist()
+            se["annotations_num_keypoints"] = (ndf.reshape(-1, 3)[:, -1] >= 1).sum() if ndf.shape[0] >= 3 else 0
+            ## categories
+            se["categories_id"]   = self.index_categories_name.get(label)
+            se["categories_name"] = label
+            se["categories_keypoints"] = self.keypoints if self.keypoints is not None else []
+            se["categories_skeleton"]  = [[self.index_keypoints[x[0]], self.index_keypoints[x[1]]] for x in self.skelton] if self.skelton is not None else []
+            df = df.append(se, ignore_index=True)
+        return df
+
+
+    def to_coco(self, save_path: str):
+        df = pd.DataFrame()
+        for x in get_file_list(self.dirpath_json, regex_list=[r"\.json"]):
+            dfwk = self.read_json(x)
+            df   = pd.concat([df, dfwk], ignore_index=True, sort=False, axis=0)
+        coco = CocoManager()
+        coco.df_json = df.copy()
+        coco.re_index()
+        coco.save(save_path)

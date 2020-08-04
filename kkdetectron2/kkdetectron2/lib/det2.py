@@ -28,7 +28,7 @@ from PIL import Image
 # local package
 from kkimagemods.util.common import makedirs, correct_dirpath
 from kkimagemods.lib.coco import coco_info, CocoManager
-from kkimagemods.util.images import drow_bboxes
+from kkimagemods.util.images import drow_bboxes, convert_seg_point_to_bool
 from imageaug import AugHandler, Augmenter as aug
 
 
@@ -40,7 +40,8 @@ class MyDet2(DefaultTrainer):
             # train params
             cfg: CfgNode=None, max_iter: int=100, is_train: bool=True, aug_json_file_path: str=None, 
             base_lr: float=0.01, num_workers: int=2, resume: bool=False, lr_steps: (int,int,)=None,
-            validations: List[Tuple[str]]=None,
+            # validation param
+            validations: List[Tuple[str]]=None, valid_steps: int=100, valid_ndata: int=10,
             # train and test params
             model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", weight_path: str=None, 
             classes: List[str] = None, keypoint_names: List[str] = None, keypoint_flip_map: List[Tuple[str]] = None,
@@ -88,7 +89,7 @@ class MyDet2(DefaultTrainer):
                         MetadataCatalog.get(valid[0]).keypoint_names = keypoint_names
                         MetadataCatalog.get(valid[0]).keypoint_flip_map = keypoint_flip_map
                         MetadataCatalog.get(valid[0]).keypoint_connection_rules = [(x[0], x[1], (255,0,0)) for x in keypoint_flip_map] # Visualizer の内部で使用している
-                    list_validator.append(Validator(self.cfg.clone(), valid[0], trainer=self, steps=100, ndata=10))
+                    list_validator.append(Validator(self.cfg.clone(), valid[0], trainer=self, steps=valid_steps, ndata=valid_ndata))
                 self.register_hooks(list_validator) # Hook の登録. after_stepがtrain中に呼び出される
  
         # この定義は最後がいいかも
@@ -194,7 +195,7 @@ class MyDet2(DefaultTrainer):
             img[:, :, ::-1],
             metadata=metadata, 
             scale=1.0, 
-            instance_mode=None #ColorMode.IMAGE_BW # remove the colors of unsegmented pixels
+            instance_mode=ColorMode.IMAGE #ColorMode.IMAGE_BW # remove the colors of unsegmented pixels
         )
         v = v.draw_instance_predictions(data["instances"].to("cpu"))
         img_ret = v.get_image()[:, :, ::-1]
@@ -342,7 +343,15 @@ class MyDet2(DefaultTrainer):
                 if ins.has("gt_boxes"):     ins.set("pred_boxes",     ins.gt_boxes)
                 if ins.has("gt_classes"):   ins.set("pred_classes",   ins.gt_classes)
                 if ins.has("gt_keypoints"): ins.set("pred_keypoints", ins.gt_keypoints)
-                if ins.has("gt_masks"):     ins.set("pred_masks",     ins.gt_masks)
+                if ins.has("gt_masks"):
+                    ## gt_mask では [x1, y1, x2, y2, ... ]の形式になっているのでそれを pred [False, True, True, ...] 形式に変換する
+                    segs = ins.get("gt_masks").polygons
+                    list_ndf = []
+                    for seg_a_class in segs:
+                        ndf = convert_seg_point_to_bool(img.shape[0], img.shape[1], seg_a_class)
+                        list_ndf.append(ndf)
+                    ndf = np.concatenate([[ndfwk] for ndfwk in list_ndf], axis=0)
+                    ins.set("pred_masks", torch.from_numpy(ndf))  # Tensor 形式に変換
                 data["instances"] = ins
                 img = self.draw_annoetation(img, data)
                 cv2.imwrite(outdir + "preview_augmentation." + str(i) + "." + str(j) + ".png", img)
@@ -370,6 +379,216 @@ class MyDet2(DefaultTrainer):
             df = df.append(se, ignore_index=True)
         return df
     
+
+    @classmethod
+    def __predict_to_df(cls, output: dict) -> pd.DataFrame:
+        output = output["instances"].to("cpu")
+        df = pd.DataFrame(output.get("pred_boxes").tensor.detach().numpy(), columns=["x1","y1","x2","y2"], dtype=object)
+        df["score"] = output.get("scores").detach().numpy()
+        df["class"] = output.get("pred_classes").detach().numpy()
+        df["keypoints"] = np.nan # ndarray 参照形式で代入しようとしたがobject typeが複数ある場合、values で ndf の copy が作成されるため参照形式で修正できない
+        try:
+            ndf = df.values
+            ndf_key = output.get("pred_keypoints").detach().numpy()
+            if ndf_key.shape[0] > 0:
+                ndf[:, -1] = ndf_key.reshape(df.shape[0], -1).tolist()
+                df = pd.DataFrame(ndf, columns=df.columns)
+        except KeyError:
+            # keypoint がない場合は pass
+            pass
+        return df
+    
+
+    def eval_a_image(
+        self, imgpath: str, coco_gt: CocoManager, 
+        classes: List[str], thre_iou: float=0.5,
+        keypoints: List[str]=None, skeleton: List[List[str]]=None
+    ) -> pd.DataFrame:
+        df_json = coco_gt.df_json
+        img     = cv2.imread(imgpath)
+        output  = self.predict(img)
+        fname   = os.path.basename(imgpath)
+        df      = self.__predict_to_df(output)
+        df["file_name"] = fname
+        df["class"]     = df["class"].map({i:x for i, x in enumerate(classes)}) 
+        # IoU
+        ndf_base = np.zeros_like(img[:, :, 0]).astype(bool)
+        df_anno = df_json[df_json["images_file_name"] == fname]
+        for index, (class_name, [x,y,w,h]) in enumerate(df_anno[["categories_name","annotations_bbox"]].values):
+            df["gt_bbox_"+class_name+"_"+str(index)] = df["class"].apply(lambda _: [x,y,w,h]) # class の箇所はなんでも良い
+            colname = "gt_iou_"+class_name+"_"+str(index)
+            ndf_gt = ndf_base.copy()
+            ndf_gt[int(y):int(y+h+1), int(x):int(x+w+1)] = True
+            df[colname] = np.nan
+            for i, (x1, y1, x2, y2, ) in enumerate(df[["x1","y1","x2","y2"]].values):
+                ndf_pred = ndf_base.copy()
+                ndf_pred[int(y1):int(y2+1), int(x1):int(x2+1)] = True
+                iou = (ndf_gt & ndf_pred).sum() / (ndf_gt | ndf_pred).sum()
+                df.loc[df.index[i], colname] = iou
+        # tp, fp
+        for class_name in classes:
+            df["gt_"+class_name+"_n"] = df.columns.str.contains("gt_iou_"+class_name).sum()
+            for y in df.columns[df.columns.str.contains("^gt_iou_"+class_name, regex=True)]:
+                boolwk = (df["class"] == class_name)
+                df.loc[~boolwk, y] = np.nan # 別class の predictで IoU を計算している値はnan に変換
+                colname = y.replace("gt_iou_","pred_")
+                ## pos:: 3: tp, 2: fp1(IoU閾値を満たしていない) 1: fp2(IoU が全く無い)
+                df[colname] = np.nan
+                df.loc[(df[y] >= thre_iou), colname] = 3.0
+                df.loc[(df[y] <  thre_iou), colname] = 2.0
+                df.loc[(df[y] == 0), colname] = 1.0
+            # ある prediction が tp か fp1 か fp2 なのかを分類する
+            dfwk = df.loc[:, df.columns.str.contains("^pred_"+class_name+"_[0-9]+$", regex=True)].copy()
+            df["pred_"+class_name] = np.nan
+            dfwkwk = df.loc[:, df.columns.str.contains("^gt_iou_"+class_name, regex=True)].copy()
+            dfwkwk = dfwkwk.idxmax(axis=1).apply(lambda x: x.split("_")[-1]).astype(int)
+            df.loc[(dfwk.max(axis=1) == 3).values, ("pred_"+class_name)] = dfwkwk.loc[(dfwk.max(axis=1) == 3).values] # TPの場合は、どのGTに対してのTPかのラベルを残す
+            df.loc[(dfwk.max(axis=1) == 2).values, ("pred_"+class_name)] = -1
+            df.loc[(dfwk.max(axis=1) == 1).values, ("pred_"+class_name)] = -1
+            # keypoint(tp のデータについて調査)
+            if keypoints is not None:
+                keypoints = np.array(keypoints)
+                instances = df["pred_"+class_name].unique()
+                instances = instances[instances >= 0].astype(int)
+                df["gt_keys_"  +class_name] = np.nan
+                df["pred_keys_"+class_name] = np.nan
+                df["pred_sklt_"+class_name] = np.nan
+                for i_gt in instances: # i_gtは df_anno の index 番号と一致する
+                    ## ここから gt のループ
+                    se_anno   = df_anno.iloc[i_gt]
+                    bool_keys = np.isin(se_anno["categories_keypoints"], keypoints)
+                    gt_keys   = np.array(se_anno["annotations_keypoints"]).reshape(-1, 3)
+                    gt_keys   = gt_keys[bool_keys, :]
+                    gt_len_base = np.sqrt(se_anno["annotations_bbox"][2] ** 2 + se_anno["annotations_bbox"][3] ** 2)
+                    bool_loc  = (df["pred_"+class_name] == i_gt).values
+                    df.loc[bool_loc, "gt_keys_"+class_name] = df.loc[bool_loc, "class"].apply(lambda _: gt_keys.reshape(-1).tolist()) # class の箇所はなんでも良い
+                    ndf = df.values.copy() # list を代入できないので、ndf で置き換えてから、再度dfを作成する
+                    for i_pred in df.index[bool_loc]:
+                        se = df.loc[i_pred, :].copy()
+                        pred_keys = np.array(se["keypoints"]).reshape(-1, 3)
+                        diff_keys = np.sqrt((gt_keys[:, 0] - pred_keys[:, 0]) ** 2 + (gt_keys[:, 1] - pred_keys[:, 1]) ** 2)
+                        diff_keys = diff_keys / gt_len_base # bbox の対角線の長さで規格化する
+                        diff_keys[gt_keys[:, -1] == 0] = -1 # gt が無い keypoint の誤差は -1 とする
+                        diff_keys = np.append(diff_keys, pred_keys[:, -1]).reshape(2, -1).T.reshape(-1).tolist() # keypointのscoreを追加しておく
+                        ndf[i_pred, -2] = diff_keys # ndarray形式でlistを代入. i_predは indexと一致しているはず
+                        ## skelton の処理. gt とのvector の差を出しておく (diff_x, diff_y, ratio_length)
+                        if skeleton is not None:
+                            list_sklt = []
+                            for [key1, key2] in skeleton:
+                                gt_key1   = gt_keys[  keypoints == key1, :].reshape(-1)
+                                gt_key2   = gt_keys[  keypoints == key2, :].reshape(-1)
+                                pred_key1 = pred_keys[keypoints == key1, :].reshape(-1)
+                                pred_key2 = pred_keys[keypoints == key2, :].reshape(-1)
+                                vec_gt    = [gt_key2[  0] - gt_key1[  0], gt_key2[  1] - gt_key1[  1]] # x,y
+                                vec_pred  = [pred_key2[0] - pred_key1[0], pred_key2[1] - pred_key1[1]] # x,y
+                                list_sklt.append(
+                                    [
+                                        (vec_pred[0] - vec_gt[0])/gt_len_base,
+                                        (vec_pred[1] - vec_gt[1])/gt_len_base, 
+                                        np.sqrt(vec_pred[0]**2 + vec_pred[1]**2) / np.sqrt(vec_gt[0]**2 + vec_gt[1]**2)
+                                    ]
+                                )
+                            ndf[i_pred, -1] = list_sklt
+                    df = pd.DataFrame(ndf, columns=df.columns)
+        return df
+    
+
+    def eval_images(
+        self, imgdir: str, coco_gt: CocoManager, 
+        classes: List[str]=None, thre_iou: float=0.5,
+        keypoints: List[str]=None, skeleton: List[List[str]]=None
+    ) -> (pd.DataFrame, pd.DataFrame):
+        imgdir = correct_dirpath(imgdir)
+        list_df = []
+        if classes is None:
+            classes   = MetadataCatalog.get(self.dataset_name).thing_classes
+        if keypoints is None:
+            keypoints = MetadataCatalog.get(self.dataset_name).get("keypoint_names") # Noneの場合はNoneとなる
+        if skeleton is None:
+            skeleton  = MetadataCatalog.get(self.dataset_name).get("keypoint_flip_map") if keypoints is not None else None
+        for y in [imgdir + x for x in coco_gt.df_json["images_file_name"].unique()]:
+            print(f"eval image: {y}")
+            df = self.eval_a_image(y, coco_gt, classes, thre_iou=thre_iou, keypoints=keypoints, skeleton=skeleton)
+            list_df.append(df)
+        df_org = pd.concat(list_df, axis=0, ignore_index=True, sort=False)
+
+        # df_org の解析
+        list_df = []
+        for thre in np.arange(0, 1, 0.1):
+            list_df.append(self.eval_with_custom_dataframe(df_org, coco_gt, thre, classes=classes, keypoints=keypoints, skeleton=skeleton))
+        df_ana = pd.concat(list_df, axis=0, sort=False, ignore_index=True)
+        df_ana = df_ana[list_df[0].columns]
+        return df_ana, df_org
+
+
+    def eval_with_custom_dataframe(
+        self, df_org: pd.DataFrame, coco_gt: CocoManager, thre: float, 
+        classes: List[str]=None, keypoints: List[str]=None, skeleton: List[List[str]]=None
+    ) -> pd.DataFrame:
+        if classes is None:
+            classes   = MetadataCatalog.get(self.dataset_name).thing_classes
+        if keypoints is None:
+            keypoints = MetadataCatalog.get(self.dataset_name).get("keypoint_names") # Noneの場合はNoneとなる
+        df_ana = pd.DataFrame()
+        df_gt  = pd.DataFrame(index=coco_gt.df_json["images_file_name"].unique())
+        for class_name in classes:
+            df_gt_cls = df_gt.copy()
+            df_gt_cls["class"] = class_name
+            df_gt_cls["gt"]    = coco_gt.df_json[coco_gt.df_json["categories_name"]==class_name].groupby("images_file_name").size()
+            se = pd.Series(dtype=object)
+            se["thre"]  = thre
+            se["class"] = class_name
+            df = df_org[(df_org["score"] >= thre) & (df_org["class"] == class_name)].copy()
+            # bbox tp
+            labels = df["pred_"+class_name].unique()
+            df["pred_maxiou"] = np.nan
+            for label in labels:
+                if label < 0: continue
+                ## max iou のみ tp をつける
+                dfwk = df[df["pred_"+class_name] == label].copy()
+                dfwk = dfwk.sort_values(by=["gt_iou_"+class_name+"_"+str(int(label))], ascending=False)
+                index_max_iou = dfwk.groupby("file_name").apply(lambda x: x.index[0]).values
+                dfwk["pred_maxiou"] = "fp"
+                dfwk.loc[index_max_iou, "pred_maxiou"] = "tp"
+                df.loc[dfwk.index, "pred_maxiou"] = dfwk["pred_maxiou"].copy()
+            df["pred_maxiou"] = df["pred_maxiou"].fillna("fp")
+            df_piv = df.pivot_table(index="file_name", columns="pred_maxiou", values="score", aggfunc="count").fillna(0)
+            if df_piv.columns.isin(["tp"]).sum() == 0: df_piv["tp"] = 0 # ない場合もある
+            if df_piv.columns.isin(["fp"]).sum() == 0: df_piv["fp"] = 0 # ない場合もある
+            df_piv["gt_n"]      = df.groupby("file_name")["gt_"+class_name+"_n"].first()
+            df_piv["pred_n"]    = df_piv["tp"] + df_piv["fp"]
+            df_piv["recall"]    = df_piv["tp"] / df_piv["gt_n"]
+            df_piv["precision"] = df_piv["tp"] / df_piv["pred_n"]
+            # keypoint
+            if (df.columns == "pred_keys_"+class_name).sum() > 0:
+                for i_key, key_name in enumerate(keypoints):
+                    df["key_diff_"+key_name] = df["pred_keys_"+class_name].map(lambda x: x[i_key*2] if type(x) == list else np.nan)
+                    sewk = df[(df["pred_maxiou"] == "tp") & (df["key_diff_"+key_name] > 0)].groupby("file_name")["key_diff_"+key_name].mean()
+                    df_piv["key_diff_"+key_name] = sewk.copy()
+            if (df.columns == "pred_sklt_"+class_name).sum() > 0:
+                for i_key, [_, _] in enumerate(skeleton):
+                    df["key_sklt_"+str(i_key)] = df["pred_sklt_"+class_name].map(lambda x: x[i_key][-1] if type(x) == list else np.nan)
+                    sewk = df[(df["pred_maxiou"] == "tp")].groupby("file_name")["key_sklt_"+str(i_key)].mean()
+                    df_piv["key_sklt_ratio_"+str(i_key)] = sewk.copy()
+            for _x in df_piv.columns:
+                df_gt_cls[_x] = df_piv[_x].copy()
+            # summary
+            se["gt"]        = df_gt_cls["gt"].fillna(0).sum()
+            se["tp"]        = df_gt_cls["tp"].fillna(0).sum()
+            se["fp"]        = df_gt_cls["fp"].fillna(0).sum()
+            se["recall"]    = df_gt_cls["recall"].fillna(0).mean()
+            se["precision"] = df_gt_cls["precision"].mean() # precision は fiillna しちゃだめ
+            for keycol in df_gt_cls.columns[df_gt_cls.columns.str.contains("key_diff_", regex=True)]:
+                se[keycol]  = df_gt_cls[keycol].mean()
+            for keycol in df_gt_cls.columns[df_gt_cls.columns.str.contains("key_sklt_ratio_", regex=True)]:
+                se[keycol]  = df_gt_cls[keycol].mean()
+            df_ana = df_ana.append(se, ignore_index=True)
+        df_ana["f1"] = 2 * df_ana["precision"] * df_ana["recall"] / (df_ana["precision"] + df_ana["recall"])
+        colnames_kpt1 = df_ana.columns[df_ana.columns.str.contains("^key_diff_", regex=True)].tolist()
+        colnames_kpt2 = df_ana.columns[df_ana.columns.str.contains("^key_sklt_ratio_", regex=True)].tolist()
+        df_ana = df_ana[["class","thre","gt","tp","fp","precision","recall","f1"] + colnames_kpt1 + colnames_kpt2]
+        return df_ana
+
 
     def evalation(self, img_paths: List[str]):
         df = pd.DataFrame()
@@ -404,10 +623,10 @@ class Validator(HookBase):
     def after_step(self):
         if self.trainer.iter > 0 and self.trainer.iter % self.steps == 0:
             list_dict = []
-            for _ in range(self.ndata):
-                data = next(self._loader)
-                self.dataaa = data
-                with torch.no_grad():
+            # self.trainer.model.eval() # これをすると model(data) の動作が変わるのでやらない。
+            with torch.no_grad():
+                for _ in range(self.ndata):
+                    data = next(self._loader)
                     loss_dict = self.trainer.model(data)
                     list_dict.append({
                         k: v.detach().cpu().item() if isinstance(v, torch.Tensor) else float(v)
@@ -427,7 +646,12 @@ class MyMapper(DatasetMapper):
     def __init__(self, cfg, json_file_path, is_train=True):
         super().__init__(cfg, is_train=is_train)
         self.aug_handler = AugHandler.load_from_path(json_file_path)
-        if is_train: self.tfm_gens = self.tfm_gens[:-1]
+        if is_train: 
+            self.tfm_gens = self.tfm_gens[:-1]
+            self.tfm_gens.insert(0, T.RandomRotation([0, 90, 180, 270], sample_style="choice") )
+            self.tfm_gens.insert(0, T.RandomFlip(prob=0.5, horizontal=True,  vertical=False))
+            self.tfm_gens.insert(0, T.RandomFlip(prob=0.5, horizontal=False, vertical=True))
+            self.tfm_gens.insert(0, T.RandomCrop("relative_range", (0.8, 1.0)))
     
     def __call__(self, dataset_dict):
         """
@@ -442,9 +666,15 @@ class MyMapper(DatasetMapper):
         image = utils.read_image(dataset_dict["file_name"], format=self.img_format)
         utils.check_image_size(dataset_dict, image)
 
-        ### my code ##
+        ### my code ###
+        ## segmentaion の annotation を一旦退避して、後で追加する
+        seg_bk = [dictwk["segmentation"] for dictwk in dataset_dict["annotations"]]
+        for i in range(len(dataset_dict["annotations"])):
+            dataset_dict["annotations"][i].pop("segmentation")
         image, dataset_dict = self.aug_handler(image=image, dataset_dict_detectron=dataset_dict)
-        ### my code ##
+        for i in range(len(dataset_dict["annotations"])):
+            dataset_dict["annotations"][i]["segmentation"] = seg_bk[i]
+        ### my code ###
 
         if "annotations" not in dataset_dict:
             image, transforms = T.apply_transform_gens(
@@ -529,27 +759,34 @@ class Det2Debug(DefaultTrainer):
     https://colab.research.google.com/drive/16jcaJoc6bCFAQ96jDe2HwtXj7BMD_-m5#scrollTo=ZyAvNCJMmvFF
     公式の tutorial を参考にして作成した最も simple な class. debug で使用する
     """
-    def __init__(self, dataset_name: str, coco_json_path: str, image_root: str):
+    def __init__(self, dataset_name: str=None, coco_json_path: str=None, image_root: str=None, is_predictor: bool=False):
         self._dataset_name = dataset_name
-        register_coco_instances(dataset_name, {}, coco_json_path, image_root)
         cfg = get_cfg()
-        cfg.merge_from_file(model_zoo.get_config_file("COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml"))
-        cfg.DATASETS.TRAIN = (dataset_name,)
-        cfg.DATASETS.TEST = ()
-        cfg.DATALOADER.NUM_WORKERS = 2
-        cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml")  # Let training initialize from model zoo
-        cfg.SOLVER.IMS_PER_BATCH = 2
-        cfg.SOLVER.BASE_LR = 0.01  # pick a good LR
-        cfg.SOLVER.MAX_ITER = 300    # 300 iterations seems good enough for this toy dataset; you may need to train longer for a practical dataset
-        cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128   # faster, and good enough for this toy dataset (default: 512)
-        cfg.MODEL.ROI_HEADS.NUM_CLASSES = 10  # only has one class (ballon)
-        super().__init__(cfg)
-        self.resume_or_load(resume=False)
+        cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
+        cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")  # Let training initialize from model zoo
+        if is_predictor:
+            self.cfg = cfg
+            self.set_predictor(is_original=True)
+        else:
+            if self._dataset_name is None: raise Exception("dataset name is None !")
+            cfg.DATASETS.TRAIN = (dataset_name,)
+            cfg.DATASETS.TEST = ()
+            cfg.DATALOADER.NUM_WORKERS = 2
+            cfg.SOLVER.IMS_PER_BATCH = 2
+            cfg.SOLVER.BASE_LR = 0.01  # pick a good LR
+            cfg.SOLVER.MAX_ITER = 300    # 300 iterations seems good enough for this toy dataset; you may need to train longer for a practical dataset
+            cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128   # faster, and good enough for this toy dataset (default: 512)
+            cfg.MODEL.ROI_HEADS.NUM_CLASSES = 10  # only has one class (ballon)
+            register_coco_instances(dataset_name, {}, coco_json_path, image_root)
+            super().__init__(self.cfg)
+            self.resume_or_load(resume=False)
     
-    def set_predictor(self):
-        self.cfg.MODEL.WEIGHTS = os.path.join(self.cfg.OUTPUT_DIR, "model_final.pth")
-        self.cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.7   # set the testing threshold for this model
-        self.cfg.DATASETS.TEST = (self._dataset_name, )
+    def set_predictor(self, is_original: bool=False):
+        if is_original == False:
+            self.cfg.MODEL.WEIGHTS = os.path.join(self.cfg.OUTPUT_DIR, "model_final.pth")
+        self.cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5   # set the testing threshold for this model
+        if self._dataset_name is not None:
+            self.cfg.DATASETS.TEST = (self._dataset_name, )
         self.predictor = DefaultPredictor(self.cfg)        
 
     def show(self, file_path: str):
