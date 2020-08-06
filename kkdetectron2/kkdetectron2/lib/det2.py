@@ -169,7 +169,7 @@ class MyDet2(DefaultTrainer):
 
 
     def show(self, img: np.ndarray, add_padding: int=0, only_best: bool = False, preview: bool=False) -> np.ndarray:
-        output   = self.predict(img)
+        output = self.predict(img)
         for i in range(output["instances"].get("pred_boxes").tensor.shape[0]):
             for j in range(4):
                 output["instances"].get("pred_boxes").tensor[i][j] += add_padding
@@ -441,55 +441,57 @@ class MyDet2(DefaultTrainer):
             dfwk = df.loc[:, df.columns.str.contains("^pred_"+class_name+"_[0-9]+$", regex=True)].copy()
             df["pred_"+class_name] = np.nan
             dfwkwk = df.loc[:, df.columns.str.contains("^gt_iou_"+class_name, regex=True)].copy()
-            dfwkwk = dfwkwk.idxmax(axis=1).apply(lambda x: x.split("_")[-1]).astype(int)
-            df.loc[(dfwk.max(axis=1) == 3).values, ("pred_"+class_name)] = dfwkwk.loc[(dfwk.max(axis=1) == 3).values] # TPの場合は、どのGTに対してのTPかのラベルを残す
-            df.loc[(dfwk.max(axis=1) == 2).values, ("pred_"+class_name)] = -1
-            df.loc[(dfwk.max(axis=1) == 1).values, ("pred_"+class_name)] = -1
-            # keypoint(tp のデータについて調査)
-            if keypoints is not None:
-                keypoints = np.array(keypoints)
-                instances = df["pred_"+class_name].unique()
-                instances = instances[instances >= 0].astype(int)
-                df["gt_keys_"  +class_name] = np.nan
-                df["pred_keys_"+class_name] = np.nan
-                df["pred_sklt_"+class_name] = np.nan
-                for i_gt in instances: # i_gtは df_anno の index 番号と一致する
-                    ## ここから gt のループ
-                    se_anno   = df_anno.iloc[i_gt]
-                    bool_keys = np.isin(se_anno["categories_keypoints"], keypoints)
-                    gt_keys   = np.array(se_anno["annotations_keypoints"]).reshape(-1, 3)
-                    gt_keys   = gt_keys[bool_keys, :]
-                    gt_len_base = np.sqrt(se_anno["annotations_bbox"][2] ** 2 + se_anno["annotations_bbox"][3] ** 2)
-                    bool_loc  = (df["pred_"+class_name] == i_gt).values
-                    df.loc[bool_loc, "gt_keys_"+class_name] = df.loc[bool_loc, "class"].apply(lambda _: gt_keys.reshape(-1).tolist()) # class の箇所はなんでも良い
-                    ndf = df.values.copy() # list を代入できないので、ndf で置き換えてから、再度dfを作成する
-                    for i_pred in df.index[bool_loc]:
-                        se = df.loc[i_pred, :].copy()
-                        pred_keys = np.array(se["keypoints"]).reshape(-1, 3)
-                        diff_keys = np.sqrt((gt_keys[:, 0] - pred_keys[:, 0]) ** 2 + (gt_keys[:, 1] - pred_keys[:, 1]) ** 2)
-                        diff_keys = diff_keys / gt_len_base # bbox の対角線の長さで規格化する
-                        diff_keys[gt_keys[:, -1] == 0] = -1 # gt が無い keypoint の誤差は -1 とする
-                        diff_keys = np.append(diff_keys, pred_keys[:, -1]).reshape(2, -1).T.reshape(-1).tolist() # keypointのscoreを追加しておく
-                        ndf[i_pred, -2] = diff_keys # ndarray形式でlistを代入. i_predは indexと一致しているはず
-                        ## skelton の処理. gt とのvector の差を出しておく (diff_x, diff_y, ratio_length)
-                        if skeleton is not None:
-                            list_sklt = []
-                            for [key1, key2] in skeleton:
-                                gt_key1   = gt_keys[  keypoints == key1, :].reshape(-1)
-                                gt_key2   = gt_keys[  keypoints == key2, :].reshape(-1)
-                                pred_key1 = pred_keys[keypoints == key1, :].reshape(-1)
-                                pred_key2 = pred_keys[keypoints == key2, :].reshape(-1)
-                                vec_gt    = [gt_key2[  0] - gt_key1[  0], gt_key2[  1] - gt_key1[  1]] # x,y
-                                vec_pred  = [pred_key2[0] - pred_key1[0], pred_key2[1] - pred_key1[1]] # x,y
-                                list_sklt.append(
-                                    [
-                                        (vec_pred[0] - vec_gt[0])/gt_len_base,
-                                        (vec_pred[1] - vec_gt[1])/gt_len_base, 
-                                        np.sqrt(vec_pred[0]**2 + vec_pred[1]**2) / np.sqrt(vec_gt[0]**2 + vec_gt[1]**2)
-                                    ]
-                                )
-                            ndf[i_pred, -1] = list_sklt
-                    df = pd.DataFrame(ndf, columns=df.columns)
+            if dfwkwk.shape[0] > 0 and dfwkwk.shape[1] > 0 :
+                dfwkwk = dfwkwk.loc[~dfwkwk.iloc[:, 0].isna(), :]
+                sewkwk = dfwkwk.idxmax(axis=1).apply(lambda x: x.split("_")[-1]).astype(int)
+                df.loc[dfwk[dfwk.max(axis=1) == 3].index.values, ("pred_"+class_name)] = sewkwk.loc[dfwk[(dfwk.max(axis=1) == 3)].index.values] # TPの場合は、どのGTに対してのTPかのラベルを残す
+                df.loc[dfwk[dfwk.max(axis=1) == 2].index.values, ("pred_"+class_name)] = -1
+                df.loc[dfwk[dfwk.max(axis=1) == 1].index.values, ("pred_"+class_name)] = -1
+                # keypoint(tp のデータについて調査)
+                if keypoints is not None:
+                    keypoints = np.array(keypoints)
+                    instances = df["pred_"+class_name].unique()
+                    instances = instances[instances >= 0].astype(int)
+                    df["gt_keys_"  +class_name] = np.nan
+                    df["pred_keys_"+class_name] = np.nan
+                    df["pred_sklt_"+class_name] = np.nan
+                    for i_gt in instances: # i_gtは df_anno の index 番号と一致する
+                        ## ここから gt のループ
+                        se_anno   = df_anno.iloc[i_gt]
+                        bool_keys = np.isin(se_anno["categories_keypoints"], keypoints)
+                        gt_keys   = np.array(se_anno["annotations_keypoints"]).reshape(-1, 3)
+                        gt_keys   = gt_keys[bool_keys, :]
+                        gt_len_base = np.sqrt(se_anno["annotations_bbox"][2] ** 2 + se_anno["annotations_bbox"][3] ** 2)
+                        bool_loc  = (df["pred_"+class_name] == i_gt).values
+                        df.loc[bool_loc, "gt_keys_"+class_name] = df.loc[bool_loc, "class"].apply(lambda _: gt_keys.reshape(-1).tolist()) # class の箇所はなんでも良い
+                        ndf = df.values.copy() # list を代入できないので、ndf で置き換えてから、再度dfを作成する
+                        for i_pred in df.index[bool_loc]:
+                            se = df.loc[i_pred, :].copy()
+                            pred_keys = np.array(se["keypoints"]).reshape(-1, 3)
+                            diff_keys = np.sqrt((gt_keys[:, 0] - pred_keys[:, 0]) ** 2 + (gt_keys[:, 1] - pred_keys[:, 1]) ** 2)
+                            diff_keys = diff_keys / gt_len_base # bbox の対角線の長さで規格化する
+                            diff_keys[gt_keys[:, -1] == 0] = -1 # gt が無い keypoint の誤差は -1 とする
+                            diff_keys = np.append(diff_keys, pred_keys[:, -1]).reshape(2, -1).T.reshape(-1).tolist() # keypointのscoreを追加しておく
+                            ndf[i_pred, -2] = diff_keys # ndarray形式でlistを代入. i_predは indexと一致しているはず
+                            ## skelton の処理. gt とのvector の差を出しておく (diff_x, diff_y, ratio_length)
+                            if skeleton is not None:
+                                list_sklt = []
+                                for [key1, key2] in skeleton:
+                                    gt_key1   = gt_keys[  keypoints == key1, :].reshape(-1)
+                                    gt_key2   = gt_keys[  keypoints == key2, :].reshape(-1)
+                                    pred_key1 = pred_keys[keypoints == key1, :].reshape(-1)
+                                    pred_key2 = pred_keys[keypoints == key2, :].reshape(-1)
+                                    vec_gt    = [gt_key2[  0] - gt_key1[  0], gt_key2[  1] - gt_key1[  1]] # x,y
+                                    vec_pred  = [pred_key2[0] - pred_key1[0], pred_key2[1] - pred_key1[1]] # x,y
+                                    list_sklt.append(
+                                        [
+                                            (vec_pred[0] - vec_gt[0])/gt_len_base,
+                                            (vec_pred[1] - vec_gt[1])/gt_len_base, 
+                                            np.sqrt(vec_pred[0]**2 + vec_pred[1]**2) / np.sqrt(vec_gt[0]**2 + vec_gt[1]**2)
+                                        ]
+                                    )
+                                ndf[i_pred, -1] = list_sklt
+                        df = pd.DataFrame(ndf, columns=df.columns)
         return df
     
 
@@ -543,7 +545,7 @@ class MyDet2(DefaultTrainer):
             labels = df["pred_"+class_name].unique()
             df["pred_maxiou"] = np.nan
             for label in labels:
-                if label < 0: continue
+                if label < 0 or np.isnan(label): continue
                 ## max iou のみ tp をつける
                 dfwk = df[df["pred_"+class_name] == label].copy()
                 dfwk = dfwk.sort_values(by=["gt_iou_"+class_name+"_"+str(int(label))], ascending=False)

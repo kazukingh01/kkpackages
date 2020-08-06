@@ -67,6 +67,82 @@ def convert_seg_point_to_bool(img_height: int, img_width: int, segmentations: Li
     return img_add
 
 
+def compute_diameter(ndf: np.ndarray, preview: bool=False):
+    """
+    diameter を計算したい mask (np.ndarray[bool]) を入力する
+    Params::
+        ndf: np.ndarray[bool]. ndf.shape = (縦, 横)
+    """
+    # mask の各座標を求める
+    points = np.concatenate([[x.tolist()] for x in np.where(ndf)], axis=0) # 0:縦, 1:横
+    # 1次関数で Fitting
+    params = np.polyfit(points[1], points[0], 1) # cv2は左上rを原点としてy軸は下向きが生の方向なので反転する
+    line1_y = lambda x: params[0] * x + params[1]
+    line1_x = lambda y: (y - params[1]) / params[0]
+    # input画像との交点を計算する
+    y_w_min = line1_y(0)
+    y_w_max = line1_y(ndf.shape[1])
+    x_h_min = line1_x(0)
+    x_h_max = line1_x(ndf.shape[0])
+    x1, y1, x2, y2, bool_slope = 0, 0, 0, 0, False
+    if   0 <= x_h_min and x_h_min <= ndf.shape[1] and 0 <= x_h_max and x_h_max <= ndf.shape[1]:
+        x1, y1, x2, y2 = int(x_h_min), 0, int(x_h_max), ndf.shape[0]
+        bool_slope = True # 線が、画像の上下に横断している場合
+    elif 0 <= y_w_min and y_w_min <= ndf.shape[0] and 0 <= y_w_max and y_w_max <= ndf.shape[0]:
+        x1, y1, x2, y2 = 0, int(y_w_min), ndf.shape[1], int(y_w_max)
+    # 真っ黒な画像を作成
+    img  = np.zeros((ndf.shape[0], ndf.shape[1], 3)).astype(np.uint8)
+    # mask 領域に色を塗る
+    img[:, :, 0][ndf] = 255
+    img_mask = img.copy() # diameter 算出に使うのでここで一旦保持. 白画像にしておく
+    img_mask[:, :, 1][ndf] = 255 
+    img_mask[:, :, 2][ndf] = 255 
+    # 線を引く
+    img = cv2.line(img, (x1, y1), (x2, y2), (0, 255, 0), thickness=1, lineType=cv2.LINE_8, shift=0) # 線を引く
+    # Fittingした１次関数に直行する傾きを持つ１次関数を定義
+    line2_b = lambda x, y: y + (1 / params[0] * x)
+    # b(切片) の範囲を計算する
+    b_min, b_max = 0, 0
+    if bool_slope:
+        # Fittingが画像の上下に横断している。つまり直行する線は画面の左右を横断
+        b_min = line2_b(line1_x(0), 0)
+        b_max = line2_b(line1_x(ndf.shape[0]), ndf.shape[0])
+    else:
+        b_min = line2_b(0, line1_y(0))
+        b_max = line2_b(ndf.shape[1], line1_y(ndf.shape[1]))
+    # 直行する線を100本描く. 100本とsegmentation の and領域の端と端を取得する
+    list_length = []
+    for b in np.arange(b_min, b_max, (b_max - b_min)/100):
+        line2_y = lambda x: -1 / params[0] * x + b
+        line2_x = lambda y: -1 * (y - b) * params[0]
+        x1, y1, x2, y2 = 0, 0, 0, 0
+        if bool_slope:
+            # 直行する線は画面の左右を横断
+            x1, y1, x2, y2 = 0, int(line2_y(0)), ndf.shape[1], int(line2_y(ndf.shape[1]))
+        else:
+            # 直行する線は画面の上下を横断
+            x1, y1, x2, y2 = int(line2_x(0)), 0, int(line2_x(ndf.shape[0])), ndf.shape[0]
+        # 線を引く
+        img   = cv2.line(img, (x1, y1), (x2, y2), (0, 0, 255), thickness=1, lineType=cv2.LINE_8, shift=0) # 線を引く
+        # 線を引いて、segmentation した領域との and 条件を撮る
+        imgwk = cv2.line(np.zeros_like(img_mask).astype(np.uint8), (x1, y1), (x2, y2), (255, 255, 255), thickness=1, lineType=cv2.LINE_8, shift=0) # 線を引く
+        imgwk = (imgwk[:, :, 0] > 0) & (img_mask[:, :, 0] > 0) # and 条件
+        if imgwk.sum() > 0:
+            points_wk = np.concatenate([[x.tolist()] for x in np.where(imgwk)], axis=0) # 0:縦, 1:横
+            # 縦で(横でもいいが)ポイントが最小・最大となる２点を取得する
+            y_min = points_wk[0].min()
+            y_max = points_wk[0].max()
+            x_min = points[1][points[0] == y_min].min()
+            x_max = points[1][points[0] == y_max].max()
+            list_length.append(np.sqrt((x_max - x_min) ** 2 + (y_max - y_min) ** 2))
+    length = round(np.median(list_length), 1)
+    img = cv2.putText(img, str(length), (50, 50), cv2.FONT_HERSHEY_COMPLEX, 0.8, (255, 255, 255), lineType=cv2.LINE_AA)
+    if preview:
+        cv2.imshow("test", img)
+        cv2.waitKey(0)
+    return length
+
+
 def add_image_in_region(binary: np.ndarray, addImage: np.ndarray, \
     x: int, y: int, width: int, height: int, extend_width: int=0) -> np.ndarray:
     """

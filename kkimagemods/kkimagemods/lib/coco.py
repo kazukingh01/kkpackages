@@ -689,8 +689,8 @@ class CocoManager:
 
         # coco format に足りないカラムがあれば追加する
         for name, default_value in zip(
-            ["categories_keypoints", "categories_skeleton", "licenses_name"], 
-            [[], [], np.nan]
+            ["categories_keypoints", "categories_skeleton", "licenses_name", "licenses_url"], 
+            [[], [], np.nan, np.nan]
         ):
             if (self.df_json.columns == name).sum() == 0:
                 self.df_json[name] = [default_value for _ in np.arange(self.df_json.shape[0])]
@@ -701,6 +701,7 @@ class CocoManager:
         self.df_json["annotations_image_id"] = self.df_json["images_coco_url"].map(dictwk)
         # license id
         self.df_json["licenses_name"] = self.df_json["licenses_name"].fillna("test license")
+        self.df_json["licenses_url"]  = self.df_json["licenses_url"]. fillna("http://test")
         dictwk = {x:i  for i, x in enumerate(np.sort(self.df_json["licenses_name"].unique()))}
         self.df_json["images_license"] = self.df_json["licenses_name"].map(dictwk)
         self.df_json["licenses_id"]    = self.df_json["licenses_name"].map(dictwk)
@@ -734,7 +735,7 @@ class CocoManager:
     def organize_segmentation(self):
         """
         Segmentation の annotation を使って augmentation をする場合、
-        変な annotation になっているとエラーが発生するため、整理する
+        変な annotation になっているとエラーが発生するため、整理するための関数
         """
         ndf_json  = self.df_json.values.copy()
         index_seg = np.where(self.df_json.columns == "annotations_segmentation")[0].min()
@@ -801,6 +802,54 @@ class CocoManager:
         df["categories_keypoints"] = df["categories_keypoints"].apply(lambda x: np.array(x)[np.isin(np.array(x), list_key_names)].tolist()).copy()
         df["categories_skeleton"]  = df["categories_keypoints"].apply(lambda x: [np.where(np.isin(np.array(x), _x))[0].tolist() for _x in list_key_skeleton])
         self.df_json = df.copy()
+
+
+    def concat_segmentation(self, category_name: str):
+        """
+        category_name に指定したクラスの segmentation を images_coco_url 単位で結合する
+        """
+        df = self.df_json.copy()
+        df = df[df["categories_name"] == category_name]
+        df_rep = pd.DataFrame()
+        for _, dfwk in df.groupby("images_coco_url"):
+            se = dfwk.iloc[0].copy()
+            list_seg = []
+            for segs in dfwk["annotations_segmentation"].values:
+                for seg in segs:
+                    list_seg.append([int(x) for x in seg])
+            se["annotations_segmentation"] = list_seg
+            bbox = np.concatenate(list_seg).reshape(-1, 2)
+            se["annotations_bbox"] = [bbox[:, 0].min(), bbox[:, 1].min(), bbox[:, 0].max() - bbox[:, 0].min(), bbox[:, 1].max() - bbox[:, 1].min()]
+            se["annotations_bbox"] = [int(x) for x in se["annotations_bbox"]]
+            se["annotations_area"] = int(dfwk["annotations_area"].sum())
+            df_rep = df_rep.append(se, ignore_index=True, sort=False)
+        df = self.df_json.copy()
+        df = df[df["categories_name"] != category_name]
+        df = pd.concat([df, df_rep], axis=0, ignore_index=True, sort=False)
+        self.df_json = df.copy()
+        self.re_index()
+    
+
+    def copy_annotation(self, catname_copy_from: str, catname_copy_to: str, colnames: List[str]):
+        """
+        images_coco_url 単位である category name の○○を別の category name の○○に copyする
+        """
+        df = self.df_json.copy()
+        ## ある image に instance が複数ある場合は最初の annotation を取ってくる
+        df_from = df[df["categories_name"] == catname_copy_from].groupby("images_coco_url").first()
+        df_from.columns = [x + "_from" for x in df_from.columns]
+        df_from = df_from.reset_index()
+        df_to   = df[df["categories_name"] == catname_copy_to  ].copy()
+        for colname in colnames:
+            df_to = pd.merge(df_to, df_from[["images_coco_url",colname+"_from"]].copy(), how="left", on="images_coco_url")
+            df_to[colname] = df_to[colname + "_from"].copy()
+            if df_to[colname].isna().sum() > 0: raise Exception(f'{colname} has nan')
+            df_to = df_to.drop(columns=[colname + "_from"])
+        df = df[df["categories_name"] != catname_copy_to]
+        df = pd.concat([df, df_to], axis=0, ignore_index=True, sort=False)
+        self.df_json = df.copy()
+        self.re_index()
+
 
 
     def to_coco_format(self, df_json: pd.DataFrame = None):
@@ -1161,9 +1210,16 @@ class Labelme2Coco:
             ## bbox, segmentation
             if   shape_type == "rectangle":
                 [[x1, y1], [x2, y2]] = points
+                if x1 > x2:
+                    x2 = points[0][0]
+                    x1 = points[1][0]
+                if y1 > y2:
+                    y2 = points[0][1]
+                    y1 = points[1][1]
                 se["annotations_bbox"] = [int(x1), int(y1), int(x2-x1), int(y2-y1)]
                 se["annotations_segmentation"] = []
-                se["annotations_area"] = 0
+                se["annotations_area"]    = 0
+                se["annotations_iscrowd"] = 0
             elif shape_type == "polygon":
                 ndf = np.zeros_like(img).astype(np.uint8)
                 ndf = cv2.polylines(ndf, [np.array(points).reshape(-1,1,2).astype(np.int32)], True, (255,0,0))
@@ -1171,7 +1227,9 @@ class Labelme2Coco:
                 x,y,w,h = cv2.boundingRect(contours[0])
                 se["annotations_bbox"] = [int(x), int(y), int(w), int(h)]
                 se["annotations_segmentation"] = [np.array(points).reshape(-1).astype(int).tolist()]
-                se["annotations_area"] = cv2.contourArea(contours[0])                
+                se["annotations_area"] = cv2.contourArea(contours[0])
+                se["annotations_iscrowd"] = 0
+                x1, y1, x2, y2 = x, y, x+w, y+h               
             ## keypoint
             list_kpt  = self.keypoints_belong[label] if self.keypoints_belong is not None else self.keypoints # あるlabelが所属するkptを定義する
             dfwk      = df_json[(df_json["shape_type"] == "point") & (df_json["label"].isin(list_kpt))].copy()

@@ -1,5 +1,6 @@
 from typing import List, Tuple
 import sys, os, glob, re, shutil, pickle, datetime, inspect
+import numpy as np
 
 def is_callable(class_: object, func_: str, list_index=None) -> bool:
     """ 関数がコールできるかどうかを調べる """
@@ -21,12 +22,14 @@ def correct_dirpath(dirpath: str) -> str:
     else:
         return dirpath if dirpath[-1] == "/" else (dirpath + "/")
 
-def get_file_list(dirpath: str, regex_list: List[str] = []) -> List[str]:
+def get_file_list(dirpath: str, regex_list: List[str] = [], random: bool=True) -> List[str]:
     dirpath = correct_dirpath(dirpath)
     file_list_org = glob.glob(dirpath + "**", recursive=True)
     file_list     = []
     for regstr in regex_list:
         file_list += list(filter(lambda x: len(re.findall(regstr, x)) > 0, file_list_org))
+    if random:
+        file_list = np.random.permutation(np.array(file_list)).tolist()
     return file_list if len(regex_list) > 0 else file_list_org
 
 def rm_files(dirpath: str, regex_list: List[str]):
