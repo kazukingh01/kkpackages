@@ -28,7 +28,7 @@ from PIL import Image
 # local package
 from kkimagemods.util.common import makedirs, correct_dirpath
 from kkimagemods.lib.coco import coco_info, CocoManager
-from kkimagemods.util.images import drow_bboxes, convert_seg_point_to_bool
+from kkimagemods.util.images import drow_bboxes, convert_seg_point_to_bool, fit_resize
 from imageaug import AugHandler, Augmenter as aug
 
 
@@ -43,7 +43,7 @@ class MyDet2(DefaultTrainer):
             # validation param
             validations: List[Tuple[str]]=None, valid_steps: int=100, valid_ndata: int=10,
             # train and test params
-            model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", weight_path: str=None, 
+            model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", weight_path: str=None, is_keyseg: bool=False,
             classes: List[str] = None, keypoint_names: List[str] = None, keypoint_flip_map: List[Tuple[str]] = None,
             input_size: tuple=(800, 1333), threshold: float=0.2, outdir: str="./output"
         ):
@@ -59,6 +59,10 @@ class MyDet2(DefaultTrainer):
             weight_path=weight_path, threshold=threshold, max_iter=max_iter, num_workers=num_workers, 
             base_lr=base_lr, lr_steps=lr_steps, input_size=input_size, outdir=outdir
         )
+        # cfg に対する追加の設定
+        if is_keyseg:
+            self.cfg.MODEL.MASK_ON     = True
+            self.cfg.MODEL.KEYPOINT_ON = True
         # classes は強制でセットする
         self.cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(classes)
         MetadataCatalog.get(self.dataset_name).thing_classes = classes
@@ -168,7 +172,7 @@ class MyDet2(DefaultTrainer):
         return output_list
 
 
-    def show(self, img: np.ndarray, add_padding: int=0, only_best: bool = False, preview: bool=False) -> np.ndarray:
+    def show(self, img: np.ndarray, add_padding: int=0, only_best: bool = False, preview: bool=False, resize: bool=False) -> np.ndarray:
         output = self.predict(img)
         for i in range(output["instances"].get("pred_boxes").tensor.shape[0]):
             for j in range(4):
@@ -182,6 +186,8 @@ class MyDet2(DefaultTrainer):
         if only_best:
             output["instances"] = output["instances"][0:1]
         img_ret = self.draw_annoetation(img, output)
+        if resize:
+            img_ret = fit_resize(img_ret, "y", 1000)
         if preview:
             cv2.imshow(__name__, img_ret)
             cv2.waitKey(0)
@@ -650,10 +656,9 @@ class MyMapper(DatasetMapper):
         self.aug_handler = AugHandler.load_from_path(json_file_path)
         if is_train: 
             self.tfm_gens = self.tfm_gens[:-1]
-            self.tfm_gens.insert(0, T.RandomRotation([0, 90, 180, 270], sample_style="choice") )
-            self.tfm_gens.insert(0, T.RandomFlip(prob=0.5, horizontal=True,  vertical=False))
-            self.tfm_gens.insert(0, T.RandomFlip(prob=0.5, horizontal=False, vertical=True))
+            #self.tfm_gens.insert(0, T.RandomFlip(prob=0.5, horizontal=True,  vertical=False))
             self.tfm_gens.insert(0, T.RandomCrop("relative_range", (0.8, 1.0)))
+            self.tfm_gens.insert(0, T.RandomRotation([0, 90, 180, 270], sample_style="choice") )
     
     def __call__(self, dataset_dict):
         """

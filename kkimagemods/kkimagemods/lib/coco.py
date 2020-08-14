@@ -353,6 +353,11 @@ class Ndds2Coco:
                 for _object in fjson["objects"]:
                     if _object["class"] == bbox_name:
                         bbox = [_object["bounding_box"]["top_left"][::-1], _object["bounding_box"]["bottom_right"][::-1]] #x1,y1,x2,y2
+                        for _i in range(2):
+                            for _j in range(2):
+                                if bbox[_i][_j] < 0: bbox[_i][_j] = 0
+                            if bbox[_i][0] > width:  bbox[_i][0] = width
+                            if bbox[_i][1] > height: bbox[_i][1] = height
                         x,y,w,h = bbox[0][0], bbox[0][1], bbox[1][0] - bbox[0][0], bbox[1][1] - bbox[0][1]
                         break
             else:
@@ -366,8 +371,13 @@ class Ndds2Coco:
                 for _object in fjson["objects"]:
                     if _object["class"] == seginfo["name"]:
                         if seginfo["type"] == "inbox":
-                            p1 = _object["bounding_box"]["top_left"][::-1] #y,xになっているので、x,yに入れ替える
-                            p2 = _object["bounding_box"]["bottom_right"][::-1] #y,xになっているので、x,yに入れ替える
+                            bbox = [_object["bounding_box"]["top_left"][::-1], _object["bounding_box"]["bottom_right"][::-1]] #x1,y1,x2,y2
+                            for _i in range(2):
+                                for _j in range(2):
+                                    if bbox[_i][_j] < 0: bbox[_i][_j] = 0
+                                if bbox[_i][0] > width:  bbox[_i][0] = width
+                                if bbox[_i][1] > height: bbox[_i][1] = height
+                            p1, p2 = bbox[0], bbox[1]
                             ndf_seg_bool = np.zeros_like(ndf_seg).astype(bool)
                             ndf_seg_bool[int(p1[1]):int(p2[1]+1), int(p1[0]):int(p2[0]+1)] = True
                             ndf_seg[~ndf_seg_bool] = 0

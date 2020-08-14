@@ -1,9 +1,11 @@
 import numpy as np
+import pandas as pd
 import cv2
 import os, sys
 import glob
+from functools import partial
 from typing import List, Tuple
-
+from joblib import Parallel, delayed
 # local lib
 from kkimagemods.util.common import check_type, get_file_list, correct_dirpath, makedirs
 
@@ -67,11 +69,14 @@ def convert_seg_point_to_bool(img_height: int, img_width: int, segmentations: Li
     return img_add
 
 
-def compute_diameter(ndf: np.ndarray, preview: bool=False):
+def compute_diameter(ndf: np.ndarray, preview: bool=False, resize: int=None):
     """
     diameter を計算したい mask (np.ndarray[bool]) を入力する
     Params::
         ndf: np.ndarray[bool]. ndf.shape = (縦, 横)
+    ※補足::
+        detectron2 の場合は次のように使う
+        output["instances"].get("pred_masks")[ index_pole ].to("cpu").detach().numpy()
     """
     # mask の各座標を求める
     points = np.concatenate([[x.tolist()] for x in np.where(ndf)], axis=0) # 0:縦, 1:横
@@ -132,15 +137,235 @@ def compute_diameter(ndf: np.ndarray, preview: bool=False):
             # 縦で(横でもいいが)ポイントが最小・最大となる２点を取得する
             y_min = points_wk[0].min()
             y_max = points_wk[0].max()
-            x_min = points[1][points[0] == y_min].min()
-            x_max = points[1][points[0] == y_max].max()
+            x_min = points_wk[1][points_wk[0] == y_min].min()
+            x_max = points_wk[1][points_wk[0] == y_max].max()
             list_length.append(np.sqrt((x_max - x_min) ** 2 + (y_max - y_min) ** 2))
     length = round(np.median(list_length), 1)
     img = cv2.putText(img, str(length), (50, 50), cv2.FONT_HERSHEY_COMPLEX, 0.8, (255, 255, 255), lineType=cv2.LINE_AA)
+    if resize is not None:
+        img = fit_resize(img, "y", scale=resize)
     if preview:
         cv2.imshow("test", img)
         cv2.waitKey(0)
     return length
+
+
+def shape_fitting(
+    ndf: np.ndarray, shape_polygon: List[float], 
+    search_scale_x: (float, float) = (0.75, 1.001, 0.1), search_scale_y: (float, float) = (0.75, 1.001, 0.1),
+    priority_type: str="r_target_and",
+    calc_target_type: str="ratio", ascending: bool=True, n_calc: int=30, 
+    preview: bool=False, n_jobs: int=1
+) -> (np.ndarray, List[List[int]], pd.DataFrame, pd.Series):
+    """
+    入力された binary画像を元に、 binaryを回転させながら最適な短径を計算する
+    Params::
+        ndf: binary
+        shape_polygon:
+            x1, y1, t1, c1, ... cは次の点と繋がるかどうか。tはthickness, 辺1の正方形の中のどの位置に点を描くかをfloat で表す
+            [0.2, 0.2, 1, 0.6, 0.2, 1, 0.8, 0.5, 1, 0.6, 0.8, 1, 0.2, 0.8, 0]
+        search_scale_x:
+            shape_polygon の形状を x方向にどの程度 scale して探索するか. 1.0倍のscaleはある短形の短い辺の長さが基準. np.arange()の中身
+        search_scale_y:
+            shape_polygon の形状を y方向にどの程度 scale して探索するか. 1.0倍のscaleはある短形の短い辺の長さが基準. np.arange()の中身
+        priority_type:
+            r_target_and or r_shape_and
+        calc_target_type: ratio or area. rationは 短形の 長辺/短辺
+        n_calc: calc_target_type をsortした時に、上からどれだけの候補を計算に使うか
+        thickness: shape を記述する際の線の太さ
+    Return::
+        4つの変数が返却される
+            1: 探索したい shape の mask
+            2: 探索したい shape の keypoints. [[x1,y1], [x2,y2], ...]
+            3: 計算した DataFrame
+            4: 3のDataFrame内のBestなSeries
+    """
+    points   = np.concatenate([[x] for x in np.where(ndf > 0)[::-1]], axis=0)
+    rotation = lambda x: np.array([np.cos(np.deg2rad(x)), -np.sin(np.deg2rad(x)), np.sin(np.deg2rad(x)), np.cos(np.deg2rad(x))]).reshape(2,2)
+    # shape を1辺=100で作成する
+    img_shape = np.zeros((100,100)).astype(np.uint8)
+    ndf_shape = np.array(shape_polygon).reshape(-1, 4)
+    for i in range(ndf_shape.shape[0] - 1):
+        x1, y1, t1, c1, x2, y2, t2, c2 = ndf_shape[i:i+2].reshape(-1)
+        x1, y1, x2, y2 = int(img_shape.shape[1]*x1), int(img_shape.shape[0]*y1), int(img_shape.shape[1]*x2), int(img_shape.shape[0]*y2)
+        if c1 == 1:
+            img_shape = cv2.line(img_shape, (x1, y1), (x2, y2), (255, 255, 255), thickness=int(t1), lineType=cv2.LINE_AA)
+        if ndf_shape.shape[0] - 2 == i:
+            if c2 == 1:
+                img_shape = cv2.line(img_shape, (x2, y2), (int(ndf_shape[0][0]), int(ndf_shape[0][1])), (255, 255, 255), thickness=int(t2), lineType=cv2.LINE_AA)
+    # 描画処理
+    if preview:
+        cv2.imshow("test", img_shape)
+        cv2.waitKey(0)
+    df_deg_area = pd.DataFrame()
+    for deg in range(360):
+        points_rot = rotation(deg) @ points # 回転させる
+        points_rot[0] = points_rot[0] - points_rot[0].min()
+        points_rot[1] = points_rot[1] - points_rot[1].min()
+        x_max = int(points_rot[0].max()) + 1
+        y_max = int(points_rot[1].max()) + 1
+        area  = x_max * y_max # min は x,y共に0に補正している
+        ratio = x_max / y_max if x_max > y_max else y_max / x_max
+        df_deg_area = df_deg_area.append({"rotation": deg, "area":area, "ratio":ratio}, ignore_index=True, sort=False)
+
+    # 並列計算用に関数化する
+    def __work(deg: float, rotation=None, points: np.ndarray=None, img_shape: np.ndarray=None, search_scale_x: Tuple[float]=None, search_scale_y: Tuple[float]=None) -> pd.DataFrame:
+        print(f"compute degree: {deg}")
+        points_rot = rotation(deg) @ points # 回転させる
+        x_min = points_rot[0].min()
+        y_min = points_rot[1].min()
+        x_max = points_rot[0].max()
+        y_max = points_rot[1].max()
+        ## mask画像を作成する
+        ndfwk = np.zeros(( int(y_max - y_min)+1, int(x_max - x_min)+1 )).astype(bool)
+        ndfwk[(points_rot[1] - y_min).astype(int), (points_rot[0] - x_min).astype(int)] = True
+        # mask画像内にshape画像を探索する. scaleは0.5〜1.0まで
+        list_values = []
+        for y_scale in np.arange(*search_scale_y):
+            for x_scale in np.arange(*search_scale_x):
+                img_shape_wk = cv2.resize(img_shape.copy() , (int(min(ndfwk.shape) * x_scale), int(min(ndfwk.shape) * y_scale))) # 横, 縦
+                if img_shape_wk.shape[0] > ndfwk.shape[0] or img_shape_wk.shape[1] > ndfwk.shape[1]: continue # scaleの結果探索サイズを超えたらcontinue
+                img_shape_wk = (img_shape_wk > 0)
+                ## mask画像に対してshape画像のFit具合を探索する
+                for index_y in np.arange(0, ndfwk.shape[0] - img_shape_wk.shape[0]):
+                    for index_x in np.arange(0, ndfwk.shape[1] - img_shape_wk.shape[1]):
+                        n_and  = (ndfwk[index_y:index_y+img_shape_wk.shape[0], index_x:index_x+img_shape_wk.shape[1]] & img_shape_wk).sum()
+                        r_shape_and  = n_and / img_shape_wk.sum()
+                        r_target_and = n_and / ndfwk.sum()
+                        list_values.append((deg, x_min, y_min, img_shape_wk.shape[1], img_shape_wk.shape[0], index_x, index_y, n_and, r_shape_and, r_target_and))
+        # 結果を格納
+        if len(list_values) == 0: return pd.DataFrame() #空DF
+        ndf_values = np.array(list_values)
+        dfwk = pd.DataFrame(ndf_values, columns=["rotation", "base_x", "base_y", "x_scale", "y_scale", "index_x", "index_y", "n_and", "r_shape_and", "r_target_and"])
+        return dfwk
+    ## partial で変数を埋め込む
+    func = partial(__work, rotation=rotation, points=points, img_shape=img_shape, search_scale_x=search_scale_x, search_scale_y=search_scale_y)
+    # area の min から順に30個計算する(並列計算する)
+    list_degs = df_deg_area.sort_values(calc_target_type, ascending=ascending)["rotation"].values[:n_calc].tolist()
+    list_df = Parallel(n_jobs=n_jobs, backend="loky", verbose=10)([delayed(func)(x) for x in list_degs])
+    # 結果を結合
+    df = pd.concat(list_df, axis=0, ignore_index=True, sort=False)
+    sewk = df[df[priority_type] == df[priority_type].max()].iloc[0] #priority_typeの最大で判断する
+    # 一番Fitした画像を使って、元画像sizeに合わせたmaskを作成する
+    img_shape_wk = cv2.resize(img_shape.copy() , (int(sewk["x_scale"]), int(sewk["y_scale"]))) # 横, 縦
+    points_shape = np.concatenate([[x] for x in np.where(img_shape_wk > 0)[::-1]], axis=0).astype(float) # x,y
+    points_shape[0] = points_shape[0] + sewk["base_x"] + sewk["index_x"]
+    points_shape[1] = points_shape[1] + sewk["base_y"] + sewk["index_y"]
+    points_shape = rotation(-sewk["rotation"]) @ points_shape # shape mask画像のポイントを反rotationする
+    points_shape = points_shape.astype(int)
+    ## points_shape が回転の結果index overしている事があるのでそういった点は外す
+    points_shape = points_shape[:, ~(points_shape[0] < 0) & ~(points_shape[0] >= ndf.shape[1]) & ~(points_shape[1] < 0) & ~(points_shape[1] >= ndf.shape[0])]
+    img_mask = np.zeros(ndf.shape).astype(bool)
+    img_mask[points_shape[1], points_shape[0]] = True
+    # Fit元のobjectのKeypointを元画像sizeに合わせたpointを作成する
+    shape_keypoints = []
+    for i in range(ndf_shape.shape[0]):
+        x1, y1, _, _, = ndf_shape[i]
+        x1 = x1 * img_shape_wk.shape[1] + sewk["base_x"] + sewk["index_x"]
+        y1 = y1 * img_shape_wk.shape[0] + sewk["base_y"] + sewk["index_y"]
+        x1, y1 = (rotation(-sewk["rotation"]) @ np.array((x1, y1)).reshape(2, -1)).reshape(-1)
+        shape_keypoints.append([int(x1), int(y1)])
+    # 描画処理
+    if preview:
+        img = np.zeros((*ndf.shape, 3)).astype(np.uint8)
+        img[:, :, 0][ndf] = 255
+        img[points_shape[1], points_shape[0], 0] = 0
+        img[points_shape[1], points_shape[0], 1] = 255
+        for x1, y1 in shape_keypoints:
+            img = cv2.circle(img, (x1, y1), 3, (0, 0, 255), thickness=-1, lineType=cv2.LINE_AA)
+        img = fit_resize(img, "y", 900)
+        cv2.imshow("test", img)
+        cv2.waitKey(0)
+    return img_mask, shape_keypoints, df, sewk
+
+
+def compute_cross_point(p1: (float, float), p2: (float, float), target: List[float]) -> (float, float):
+    """
+    あるbase_lineとtarget(line or point)との交点を求める.
+    targetがpointの場合は直行する線との交点とする
+    Return::
+        cross point x, cross point y
+    Params::
+        p1: base line の１点. x, y
+        p2: base line の１点. x, y
+        target: １点か２点を記述する。１点の場合は点、２点の場合は線とみなす
+            [x1, y1] or [x1, y1, x2, y2]
+    """
+    bool_line = None
+    if   len(target) == 2:
+        bool_line = False
+    elif len(target) == 4:
+        bool_line = True
+    else:
+        raise Exception(f"target length must be 2 or 4. this target length is {len(target)}")
+    cp_x, cp_y = None, None
+    if p2[0] - p1[0] != 0:
+        a1 = (p2[1] - p1[1]) / (p2[0] - p1[0])
+        b1 = p1[1] - (a1 * p1[0])
+        y1 = lambda x: a1 * x + b1
+        if bool_line:
+            if target[2] - target[0] != 0:
+                a2 = (target[3] - target[1]) / (target[2] - target[0])
+                b2 = target[1] - (a2 * target[0])
+                cp_x = (b2 - b1)/(a1 - a2)
+                cp_y = y1(cp_x)
+            else:
+                cp_x = target[0]
+                cp_y = y1(cp_x)
+        else:
+            if a1 == 0:
+                cp_x = target[0]
+                cp_y = p1[1]
+            else:
+                a2 = -1/a1
+                b2 = target[1] - (a2 * target[0])
+                cp_x = (b2 - b1)/(a1 - a2)
+                cp_y = y1(cp_x)
+    else:
+        if bool_line:
+            if target[2] - target[0] != 0:
+                a2 = (target[3] - target[1]) / (target[2] - target[0])
+                b2 = target[1] - (a2 * target[0])
+                cp_x = p1[0]
+                cp_y = a2 * cp_x + b2
+            else:
+                raise Exception("The two lines are perfectly parallel.")
+        else:
+            cp_x = p1[0]
+            cp_y = target[1]
+    return cp_x, cp_y
+
+
+def compute_iou(bbox1: (float, float, float, float), bbox2: (float, float, float, float)):
+    """
+    ２つのBBoxからIoUを計算する
+    Params::
+        bbox1: x1, y1, x2, y2
+        bbox2: x1, y1, x2, y2
+    """
+    b1x1, b1y1, b1x2, b1y2 = bbox1
+    b2x1, b2y1, b2x2, b2y2 = bbox2
+    x_min = np.array([b1x1, b1x2, b2x1, b2x2]).min()
+    x_max = np.array([b1x1, b1x2, b2x1, b2x2]).max()
+    y_min = np.array([b1y1, b1y2, b2y1, b2y2]).min()
+    y_max = np.array([b1y1, b1y2, b2y1, b2y2]).max()
+    # 最小値で補正する. IoU計算する領域を少なくするため
+    b1x1, b1x2, b2x1, b2x2 = int(b1x1 - x_min), int(b1x2 - x_min), int(b2x1 - x_min), int(b2x2 - x_min)
+    b1y1, b1y2, b2y1, b2y2 = int(b1y1 - y_min), int(b1y2 - y_min), int(b2y1 - y_min), int(b2y2 - y_min)
+    x_max, y_max = int(x_max - x_min), int(y_max - y_min)
+    # bbox の大小が逆の場合は補正する
+    b1x1, b1x2 = (b1x1, b1x2, ) if b1x1 < b1x2 else (b1x2, b1x1, )
+    b1y1, b1y2 = (b1y1, b1y2, ) if b1y1 < b1y2 else (b1y2, b1y1, )
+    b2x1, b2x2 = (b2x1, b2x2, ) if b2x1 < b2x2 else (b2x2, b2x1, )
+    b2y1, b2y2 = (b2y1, b2y2, ) if b2y1 < b2y2 else (b2y2, b2y1, )
+    # np.ndarray の and 領域でIoUを計算する
+    img_binary  = np.zeros((y_max+1, x_max+1)).astype(bool)
+    img_binary1 = img_binary.copy()
+    img_binary1[b1y1:b1y2, b1x1:b1x2] = True
+    img_binary2 = img_binary.copy()
+    img_binary2[b2y1:b2y2, b2x1:b2x2] = True
+    iou = (img_binary1 & img_binary2).sum() /  (img_binary1 | img_binary2).sum()
+    return iou
 
 
 def add_image_in_region(binary: np.ndarray, addImage: np.ndarray, \
@@ -307,10 +532,10 @@ def concats(file_paths: List[str]):
     return img_ret
 
 
-def same_images_concat(dir_paths: List[str], save_images_path: str = None):
+def same_images_concat(dir_paths: List[str], save_images_path: str = None, str_regex: List[str]=[r"png$", r"jpg$"]):
     dict_ret = {}
     # 最初のdirectory を BASE にする
-    list_images = get_file_list(dir_paths[0], ["png$", "jpg$"])
+    list_images = get_file_list(dir_paths[0], str_regex)
     for x in [os.path.basename(y) for y in list_images]:
         dict_ret[x] = concats([correct_dirpath(_x) + x for _x in dir_paths])
 
@@ -335,10 +560,10 @@ def fit_resize(img: np.ndarray, dim: str, scale):
     if   type(scale) == int and scale > 10:
         if   dim == "x":
             width_after  = int(scale)
-            height_after = int(height * (width / scale))
+            height_after = int(height * (scale / width))
         elif dim == "y":
             height_after = int(scale)
-            width_after  = int(width * (height / scale))
+            width_after  = int(width * (scale / height))
     else:
         raise Exception(f"scale > 10.")
     img = cv2.resize(img , (width_after, height_after)) # 横, 縦
