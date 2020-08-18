@@ -164,19 +164,25 @@ def shape_fitting(
     """
     入力された binary画像を元に、 binaryを回転させながら最適な短径を計算する
     Params::
-        ndf: binary
+        ndf: binary np.ndarray. mask
         shape_polygon:
             x1, y1, t1, c1, ... cは次の点と繋がるかどうか。tはthickness, 辺1の正方形の中のどの位置に点を描くかをfloat で表す
-            [0.2, 0.2, 1, 0.6, 0.2, 1, 0.8, 0.5, 1, 0.6, 0.8, 1, 0.2, 0.8, 0]
+            [0.2, 0.2, 3, 1, 0.6, 0.2, 3, 1, 0.8, 0.5, 3, 1, 0.6, 0.8, 3, 1, 0.2, 0.8, 3, 0]
         search_scale_x:
             shape_polygon の形状を x方向にどの程度 scale して探索するか. 1.0倍のscaleはある短形の短い辺の長さが基準. np.arange()の中身
         search_scale_y:
             shape_polygon の形状を y方向にどの程度 scale して探索するか. 1.0倍のscaleはある短形の短い辺の長さが基準. np.arange()の中身
         priority_type:
-            r_target_and or r_shape_and
-        calc_target_type: ratio or area. rationは 短形の 長辺/短辺
+            r_target_and or r_shape_and or f_score(r_target_and と r_shape_and のF値)
+        calc_target_type:
+            ratio or area. rationは 短形の 長辺/短辺
+        ascending:
+            calc_target_type をどの順序で並べるか. True = 昇順, False = 降順
         n_calc: calc_target_type をsortした時に、上からどれだけの候補を計算に使うか
-        thickness: shape を記述する際の線の太さ
+        preview:
+            fitting したい shape と結果を previewする
+        n_jobs:
+            並列計算持のCPU数
     Return::
         4つの変数が返却される
             1: 探索したい shape の mask
