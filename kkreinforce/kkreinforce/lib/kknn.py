@@ -25,22 +25,24 @@ class TorchNN(nn.Module):
         self.indexes = []
         self.modnames = [] # moduleのaddressを格納する
         self.list_modules = [] # moduleのaddressを格納する
-        for layer in layers:
+        
+        for i_layer, layer in enumerate(layers):
+            name = TorchNN.__name__ + str(i_layer).zfill(3) if layer.name is None or layer.name == "" else layer.name
             logger.debug(f'Layer: {layer}')
             self.indexes.append(layer.calc_type)
-            self.modnames.append(layer.name)
+            self.modnames.append(name)
             if   layer.node is None:
                 if type(layer.module) == TorchNN:
-                    self.add_module(layer.name, layer.module)
+                    self.add_module(name, layer.module)
                 else:
-                    self.add_module(layer.name, layer.module(*layer.params, **layer.kwards))
+                    self.add_module(name, layer.module(*layer.params, **layer.kwards))
             elif layer.node == 0:
-                self.add_module(layer.name, layer.module(in_size, *layer.params, **layer.kwards))
+                self.add_module(name, layer.module(in_size, *layer.params, **layer.kwards))
             else:
-                self.add_module(layer.name, layer.module(in_size, layer.node, *layer.params, **layer.kwards))
+                self.add_module(name, layer.module(in_size, layer.node, *layer.params, **layer.kwards))
                 in_size = layer.node
             self.list_modules.append(None)
-            self.list_modules[-1] = self.__getattr__(layer.name)
+            self.list_modules[-1] = self.__getattr__(name)
 
             # Compile
             self.list_split_output    = []
