@@ -69,7 +69,7 @@ def convert_seg_point_to_bool(img_height: int, img_width: int, segmentations: Li
     return img_add
 
 
-def compute_diameter(ndf: np.ndarray, preview: bool=False, resize: int=None):
+def compute_diameter_direct_line(ndf: np.ndarray, preview: bool=False, resize: int=None, line_params: Tuple[float]=None):
     """
     diameter を計算したい mask (np.ndarray[bool]) を入力する
     Params::
@@ -81,7 +81,11 @@ def compute_diameter(ndf: np.ndarray, preview: bool=False, resize: int=None):
     # mask の各座標を求める
     points = np.concatenate([[x.tolist()] for x in np.where(ndf)], axis=0) # 0:縦, 1:横
     # 1次関数で Fitting
-    params = np.polyfit(points[1], points[0], 1) # cv2は左上rを原点としてy軸は下向きが生の方向なので反転する
+    params = None
+    if line_params is None:
+        params = np.polyfit(points[1], points[0], 1) # cv2は左上rを原点としてy軸は下向きが生の方向なので反転する
+    else:
+        params = line_params
     line1_y = lambda x: params[0] * x + params[1]
     line1_x = lambda y: (y - params[1]) / params[0]
     # input画像との交点を計算する
@@ -232,11 +236,12 @@ def shape_fitting(
                         n_and  = (ndfwk[index_y:index_y+img_shape_wk.shape[0], index_x:index_x+img_shape_wk.shape[1]] & img_shape_wk).sum()
                         r_shape_and  = n_and / img_shape_wk.sum()
                         r_target_and = n_and / ndfwk.sum()
-                        list_values.append((deg, x_min, y_min, img_shape_wk.shape[1], img_shape_wk.shape[0], index_x, index_y, n_and, r_shape_and, r_target_and))
+                        f_score      = 2 * r_target_and * r_shape_and / (r_target_and + r_shape_and)
+                        list_values.append((deg, x_min, y_min, img_shape_wk.shape[1], img_shape_wk.shape[0], index_x, index_y, n_and, r_shape_and, r_target_and, f_score))
         # 結果を格納
         if len(list_values) == 0: return pd.DataFrame() #空DF
         ndf_values = np.array(list_values)
-        dfwk = pd.DataFrame(ndf_values, columns=["rotation", "base_x", "base_y", "x_scale", "y_scale", "index_x", "index_y", "n_and", "r_shape_and", "r_target_and"])
+        dfwk = pd.DataFrame(ndf_values, columns=["rotation", "base_x", "base_y", "x_scale", "y_scale", "index_x", "index_y", "n_and", "r_shape_and", "r_target_and", "f_score"])
         return dfwk
     ## partial で変数を埋め込む
     func = partial(__work, rotation=rotation, points=points, img_shape=img_shape, search_scale_x=search_scale_x, search_scale_y=search_scale_y)
