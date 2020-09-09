@@ -25,6 +25,16 @@ class TorchNN(nn.Module):
         self.indexes = []
         self.modnames = [] # moduleのaddressを格納する
         self.list_modules = [] # moduleのaddressを格納する
+        self.list_split_output    = []
+        """
+        例えば下記形式になっている。Tupleの0番目は、何番目のsplitか、1番目はその番目での参照indexが格納されている
+        >>> self.index_split_output
+        ((None, None), (None, None), (None, None), (0, -3), (0, -2), (0, -1))
+        """
+        self.index_split_output   = []
+        self.index_combine_output = []
+        self.proc_main  = []
+        self.proc_after = []
         
         for i_layer, layer in enumerate(layers):
             name = TorchNN.__name__ + str(i_layer).zfill(3) if layer.name is None or layer.name == "" else layer.name
@@ -43,37 +53,20 @@ class TorchNN(nn.Module):
                 in_size = layer.node
             self.list_modules.append(None)
             self.list_modules[-1] = self.__getattr__(name)
-
-            # Compile
-            self.list_split_output    = []
-            self.index_split_output   = []
-            self.index_combine_output = []
-            self.proc_main  = []
-            self.proc_after = []
-            self.compile()
+        self.compile()
     
 
     def compile(self):
-        self.list_split_output    = []
-        self.index_split_output   = []
-        self.index_combine_output = []
-        self.proc_main  = []
-        self.proc_after = []
-        split_tuple_cnt, split_numpy_cnt = 0, 0
+        split_cnt = 0
         for i, _ in enumerate(self.list_modules):
             # main proc の compile
-            if split_tuple_cnt == 0 and split_numpy_cnt == 0:
-                split_tuple_cnt, split_numpy_cnt = 0, 0
+            if split_cnt == 0:
                 self.index_split_output.append((None,None,))
                 self.proc_main.append(lambda module, output: module(output))
-            elif split_tuple_cnt > 0:
-                self.index_split_output.append((len(self.list_split_output) - 1, -split_tuple_cnt,))
-                self.proc_main.append(lambda module, output: module(output[-split_tuple_cnt]))
-                split_tuple_cnt += -1 # 1 ずつ減らす.
-            elif split_numpy_cnt > 0:
-                self.index_split_output.append((len(self.list_split_output) - 1, -split_numpy_cnt,))
-                self.proc_main.append(lambda module, output: module(output[:, -split_tuple_cnt]))
-                split_numpy_cnt += -1 # 1 ずつ減らす.
+            elif split_cnt > 0:
+                self.index_split_output.append((len(self.list_split_output) - 1, -split_cnt,))
+                self.proc_main.append(lambda module, output: module(output))
+                split_cnt += -1 # 1 ずつ減らす.
             else:
                 raise Exception(f'split type: {self.indexes[i]} is not expected.')            
 
@@ -83,19 +76,16 @@ class TorchNN(nn.Module):
                 self.proc_after.append(lambda x, opt: x)
             elif self.indexes[i] == "reshape(x,-1)":
                 self.proc_after.append(lambda x, opt: x.reshape(x.shape[0], -1))
-            elif self.indexes[i].find("split_tuple_") == 0:
+            elif self.indexes[i].find("split_") == 0:
                 self.proc_after.append(lambda x, opt: x)
                 self.list_split_output.append([])
-                split_tuple_cnt = int(self.indexes[i][-1])
-                for _ in range(split_tuple_cnt): self.list_split_output[-1].append(None)
-            elif self.indexes[i].find("split_numpy_") == 0:
-                self.proc_after.append(lambda x, opt: x)
-                self.list_split_output.append([])
-                split_numpy_cnt = int(self.indexes[i][-1])
-                for _ in range(split_numpy_cnt): self.list_split_output[-1].append(None)
+                split_cnt = int(self.indexes[i][-1])
+                for _ in range(split_cnt): self.list_split_output[-1].append(None)
             elif self.indexes[i] == "combine":
                 self.index_combine_output[-1] = len(self.list_split_output) - 1
                 self.proc_after.append(lambda x, opt: torch.cat([_x.reshape(_x.shape[0], -1) for _x in x], dim=1))
+            elif self.indexes[i] == "out_split":
+                self.proc_after.append(lambda x, opt: self.list_split_output[-1])
             elif self.indexes[i] == "rnn_outonly":
                 self.proc_after.append(lambda x, opt: x[0])
             elif self.indexes[i] == "rnn_last":
@@ -121,8 +111,8 @@ class TorchNN(nn.Module):
     def forward(self, _input: torch.Tensor, option: str=None):
         output = _input.clone()
         for i, module in enumerate(self.list_modules):
-            # DEBUG CODE を入れると劇遅になる
-            #logger.debug(f'module: {self.modnames[i]}, {module}, \ninput: {type(output)}, {output.shape if is_callable(output, "shape") else len(output)}\n{output}')
+            # DEBUG CODE を入れると劇遅になるので注意
+            # logger.debug(f'module: {self.modnames[i]}, {module}, \ninput: {type(output)}, {output.shape if is_callable(output, "shape") else len(output)}\n{output}')
             if self.index_split_output[i][0] is None:
                 output = self.proc_main[i](module, output)
             else:
@@ -132,7 +122,6 @@ class TorchNN(nn.Module):
             else:
                 output = self.list_split_output[self.index_combine_output[i]]
                 output = self.proc_after[i](output, option)
-            #logger.debug(f'\noutput: {type(output)}, {output.shape if is_callable(output, "shape") else len(output)}\n{output}')
         return output
 
 
