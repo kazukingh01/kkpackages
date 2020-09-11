@@ -18,6 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 from imageaug import AugHandler, Augmenter as aug
 from kkreinforce.lib.kknn import TorchNN, Layer
 from kkimagemods.util.images import pil2cv, cv2pil
+from kkimagemods.util.dataframes import split_data_balance
 from kkimagemods.util.common import get_file_list, correct_dirpath, makedirs
 from kkimagemods.util.logger import set_logger, set_loglevel
 logger = set_logger()
@@ -46,7 +47,7 @@ class ImageNN(nn.Module):
                     Layer("", nn.Sigmoid,None, None, (), {}),
                 )
             )
-        torch_nn_output2 = TorchNN(
+        torch_nn_output1 = TorchNN(
             128,
             Layer("", nn.Linear, 64,   None, (), {}),
             Layer("", nn.ReLU,   None, None, (), {}),
@@ -54,10 +55,10 @@ class ImageNN(nn.Module):
             Layer("", nn.ReLU,   None, None, (), {}),
             Layer("", nn.Linear, 16,   None, (), {}),
             Layer("", nn.ReLU,   None, None, (), {}),
-            Layer("", nn.Linear, 5,    None, (), {}),
-            Layer("", nn.Softmax,None, None, (), {"dim":1}),
+            Layer("", nn.Linear, 1,    None, (), {}),
+            Layer("", nn.Sigmoid,None, None, (), {}),
         )
-        torch_nn_output3 = TorchNN(
+        torch_nn_output2 = TorchNN(
             128,
             Layer("", nn.Linear, 64,   None, (), {}),
             Layer("", nn.ReLU,   None, None, (), {}),
@@ -71,26 +72,39 @@ class ImageNN(nn.Module):
         torch_nn = TorchNN(
             1024,
             Layer("", nn.Conv2d,       512,    None, (), {"kernel_size":1, "stride":1,}),
+            Layer("", nn.BatchNorm2d,  0,      None, (), {"eps":1e-05, "momentum":0.1, "affine":True, "track_running_stats":True}),
             Layer("", nn.ReLU,         None,   None, (), {}),        
             Layer("", nn.Conv2d,       256,    None, (), {"kernel_size":1, "stride":1,}),
+            Layer("", nn.BatchNorm2d,  0,      None, (), {"eps":1e-05, "momentum":0.1, "affine":True, "track_running_stats":True}),
             Layer("", nn.ReLU,         None,   None, (), {}),        
             Layer("", nn.Conv2d,       128,    None, (), {"kernel_size":1, "stride":1,}),
+            Layer("", nn.BatchNorm2d,  0,      None, (), {"eps":1e-05, "momentum":0.1, "affine":True, "track_running_stats":True}),
             Layer("", nn.ReLU,         None,   None, (), {}),        
             Layer("", nn.Conv2d,       64,     None, (), {"kernel_size":1, "stride":1,}),
+            Layer("", nn.BatchNorm2d,  0,      None, (), {"eps":1e-05, "momentum":0.1, "affine":True, "track_running_stats":True}),
             Layer("", nn.ReLU,         None,   None, (), {}),
             Layer("", nn.Identity,     64*7*7, "reshape(x,-1)", (), {}),
             Layer("", nn.Linear,       2048,   None, (), {}),
+            Layer("", nn.BatchNorm1d,  0,      None, (), {}),
+            Layer("", nn.Dropout,      None,   None, (), {"p":0.4}),
             Layer("", nn.ReLU,         None,   None, (), {}),
             Layer("", nn.Linear,       1024,   None, (), {}),
+            Layer("", nn.BatchNorm1d,  0,      None, (), {}),
+            Layer("", nn.Dropout,      None,   None, (), {"p":0.4}),
             Layer("", nn.ReLU,         None,   None, (), {}),
             Layer("", nn.Linear,       516,    None, (), {}),
+            Layer("", nn.BatchNorm1d,  0,      None, (), {}),
+            Layer("", nn.Dropout,      None,   None, (), {"p":0.25}),
             Layer("", nn.ReLU,         None,   None, (), {}),
             Layer("", nn.Linear,       256,    None, (), {}),
+            Layer("", nn.BatchNorm1d,  0,      None, (), {}),
+            Layer("", nn.Dropout,      None,   None, (), {"p":0.25}),
             Layer("", nn.ReLU,         None,   None, (), {}),
             Layer("", nn.Linear,       128,    None, (), {}),
+            Layer("", nn.BatchNorm1d,  0,      None, (), {}),
             Layer("", nn.ReLU,         None,   None, (), {}),
             #Layer("", nn.Identity,     None,   "split_8", (), {}),
-            Layer("", torch_nn_output2,None,   None, (), {}),
+            Layer("", torch_nn_output1,None,   None, (), {}),
             #Layer("", nn.Identity,     None,   "out_split", (), {}),
         )
         self.add_module("model_zoo", nn_trained.__getattr__("features")) # ImageNetの画像で学習したWeightを使える
@@ -163,15 +177,16 @@ class MyClassifier:
         # NN
         self.mynn = mynn
         # optimizer
-        self.optimizer = optim.RAdam(self.mynn.parameters(), lr=lr, weight_decay=0.001)
+        self.optimizer = optim.RAdam(self.mynn.parameters(), lr=lr, weight_decay=0)
         # Loss Function
         self.loss_funcs = [
-            #nn.BCELoss(),
-            nn.CrossEntropyLoss(),
+            nn.BCELoss(),
+            #nn.CrossEntropyLoss(),
+            #nn.SmoothL1Loss(),
         ]
         self.loss_preprocs = [
-            #lambda x: x.to(torch.float32),
-            lambda x: x.to(torch.long),
+            lambda x: x.to(torch.float32),
+            #lambda x: x.to(torch.long),
         ]
         # Transform
         self.preprocess_img = transforms.Compose([
@@ -197,23 +212,24 @@ class MyClassifier:
         self.mydataset = MyDataset(root_dirpath, json_path, transforms=self.transform)
         # Validation
         self.valid_step    = valid_step
-        self.is_validation = True if type(validation_samples) in [int,float] and validation_samples > 0 else False
+        self.is_validation = True if (type(validation_samples) in [int,float] and validation_samples > 0) or len(json_valid_paths) > 0 else False
         self.dataloaders_valid: OrderedDict = OrderedDict()
         dataset_train, dataset_valid = self.mydataset, None
         if self.is_validation:
-            listwk = list(self.mydataset.json_label.keys())
-            validation_samples = int(len(listwk) * validation_samples)
-            listwk = np.random.permutation(listwk)
-            samples_train   = listwk[:validation_samples ]
-            samples_valid   = listwk[ validation_samples:]
             transform_valid = partial(self.transform, is_train=False)
-            dataset_train   = MyDataset(root_dirpath, {x:self.mydataset.json_label[x] for x in samples_train}, transforms=self.transform)
-            dataset_valid   = MyDataset(root_dirpath, {x:self.mydataset.json_label[x] for x in samples_valid}, transforms=transform_valid)
-            # Train data split
-            self.dataloaders_valid["normal_validation"] = torch.utils.data.DataLoader(
-                dataset_valid, batch_size=batch_size_valid, shuffle=True, num_workers=num_workers, 
-                drop_last=True, collate_fn=self.collate_fn
-            )
+            if (type(validation_samples) in [int,float] and validation_samples > 0):
+                listwk = list(self.mydataset.json_label.keys())
+                validation_samples = int(len(listwk) * validation_samples)
+                listwk = np.random.permutation(listwk)
+                samples_train   = listwk[:validation_samples ]
+                samples_valid   = listwk[ validation_samples:]
+                dataset_train   = MyDataset(root_dirpath, {x:self.mydataset.json_label[x] for x in samples_train}, transforms=self.transform)
+                dataset_valid   = MyDataset(root_dirpath, {x:self.mydataset.json_label[x] for x in samples_valid}, transforms=transform_valid)
+                # Train data split
+                self.dataloaders_valid["normal_validation"] = torch.utils.data.DataLoader(
+                    dataset_valid, batch_size=batch_size_valid, shuffle=True, num_workers=num_workers, 
+                    drop_last=True, collate_fn=self.collate_fn
+                )
             # Custom validation dataset
             for i_valid, (valid_dirpath, json_valid_path, ) in enumerate(json_valid_paths.items()):
                 dataset_valid = MyDataset(correct_dirpath(valid_dirpath), json_valid_path, transforms=transform_valid)
