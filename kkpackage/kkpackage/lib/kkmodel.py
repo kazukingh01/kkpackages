@@ -46,9 +46,9 @@ class MyModel:
         self.colname_explain_hist  = []
         self.colname_answer        = colname_answer
         self.colname_other         = conv_ndarray(colname_other) if colname_other is not None else np.array([])
-        self.feature_importances   = pd.DataFrame()
-        self.feature_importances_randomtrees = pd.DataFrame()
-        self.feature_importances_modeling    = pd.DataFrame()
+        self.df_feature_importances             = pd.DataFrame()
+        self.df_feature_importances_randomtrees = pd.DataFrame()
+        self.df_feature_importances_modeling    = pd.DataFrame()
         self.model          = model
         self.calibrater     = None
         self.is_calibration = False
@@ -67,16 +67,16 @@ class MyModel:
         self.n_tested_samples  = {}
         self.index_train = np.array([]) # 実際に残す際はマルチインデックスかもしれないので、numpy形式にはならない
         self.index_valid = np.array([]) # 実際に残す際はマルチインデックスかもしれないので、numpy形式にはならない
-        self.index_test = np.array([]) # 実際に残す際はマルチインデックスかもしれないので、numpy形式にはならない
+        self.index_test  = np.array([]) # 実際に残す際はマルチインデックスかもしれないので、numpy形式にはならない
         self.df_pred_train = pd.DataFrame()
         self.df_pred_valid = pd.DataFrame()
         self.df_pred_test  = pd.DataFrame()
-        self.eval_train_cm = pd.DataFrame()
-        self.eval_valid_cm = pd.DataFrame()
-        self.eval_test_cm  = pd.DataFrame()
-        self.eval_train_val = pd.Series(dtype=object)
-        self.eval_valid_val = pd.Series(dtype=object)
-        self.eval_test_val  = pd.Series(dtype=object)
+        self.df_cm_train   = pd.DataFrame()
+        self.df_cm_valid   = pd.DataFrame()
+        self.df_cm_test    = pd.DataFrame()
+        self.se_eval_train = pd.Series(dtype=object)
+        self.se_eval_valid = pd.Series(dtype=object)
+        self.se_eval_test  = pd.Series(dtype=object)
         self.optuna_study   = None
         self.fig = {}
         self.logger.info("create instance. name:"+name)
@@ -117,6 +117,19 @@ class MyModel:
         Return:: 分類モデルの場合はTrueを返却する
         """
         return is_classification_model(self.model)
+    
+
+    def update_features(self, cut_features: np.array, alive_features: np.array=None):
+        self.logger.info("START")
+        self.colname_explain_hist.append(self.colname_explain.copy())
+        if alive_features is None:
+            self.colname_explain = self.colname_explain[~np.isin(self.colname_explain, cut_features)]
+        else:
+            cut_features         = self.colname_explain[~np.isin(self.colname_explain, alive_features)]
+            self.colname_explain = self.colname_explain[ np.isin(self.colname_explain, alive_features)]
+        self.logger.info(f"cut   features by variance :{cut_features.shape[0]        }. features...{cut_features}")
+        self.logger.info(f"alive features by variance :{self.colname_explain.shape[0]}. features...{self.colname_explain}")
+        self.logger.info("END")
 
 
     def cut_features_by_variance(self, df: pd.DataFrame, cutoff: float=0.99, ignore_nan: bool=False):
@@ -131,12 +144,8 @@ class MyModel:
         self.logger.info(f"df shape:{df.shape}, cutoff:{cutoff}, ignore_nan:{ignore_nan}")
         self.logger.info(f"features:{self.colname_explain.shape}", )
         df = df[self.colname_explain] # 関数が入れ子に成りすぎてメモリが膨大になっている
-        _columns = search_features_by_variance(df, cutoff=cutoff, ignore_nan=ignore_nan, n_jobs=self.n_jobs)
-        # 特徴量の更新
-        self.colname_explain_hist.append(self.colname_explain.copy())
-        self.colname_explain = self.colname_explain[~np.isin(self.colname_explain, _columns)] 
-        self.logger.info(f"cut   features by variance :{_columns.shape[0]            }. features...{_columns}")
-        self.logger.info(f"alive features by variance :{self.colname_explain.shape[0]}. features...{self.colname_explain}")
+        cut_features = search_features_by_variance(df, cutoff=cutoff, ignore_nan=ignore_nan, n_jobs=self.n_jobs)
+        self.update_features(cut_features) # 特徴量の更新
         self.logger.info("END")
 
 
@@ -156,16 +165,10 @@ class MyModel:
         self.logger.info("START")
         self.logger.info(f"df shape:{df.shape}, cutoff:{cutoff}, ignore_nan_mode:{ignore_nan_mode}")
         self.logger.info(f"features:{self.colname_explain.shape}")
-
-        df_corr, cut_list = search_features_by_correlation(df[self.colname_explain], cutoff=cutoff, ignore_nan_mode=ignore_nan_mode, on_gpu_size=on_gpu_size, n_jobs=self.n_jobs)
+        df_corr, _ = search_features_by_correlation(df[self.colname_explain], cutoff=cutoff, ignore_nan_mode=ignore_nan_mode, on_gpu_size=on_gpu_size, n_jobs=self.n_jobs)
         self.correlation = df_corr.copy()
-
-        # 特徴量の更新
-        self.colname_explain_hist.append(self.colname_explain.copy())
-        alive_features, cut_list = self.features_by_correlation(cutoff)
-        self.colname_explain = alive_features
-        self.logger.info("cut   features by correlation:%s. features...%s", len(cut_list), cut_list[:10])
-        self.logger.info("alive features by correlation:%s. features...%s", self.colname_explain.shape[0], self.colname_explain)
+        alive_features, cut_features = self.features_by_correlation(cutoff)
+        self.update_features(cut_features, alive_features=alive_features) # 特徴量の更新
         self.logger.info("END")
 
 
@@ -175,14 +178,12 @@ class MyModel:
         if self.model is None:
             self.logger.raise_error("model is not set !!")
         if calc_randomtrees:
-            self.feature_importances_randomtrees = calc_randomtree_importance(
+            self.df_feature_importances_randomtrees = calc_randomtree_importance(
                 df, colname_explain=self.colname_explain, colname_answer=self.colname_answer, 
                 is_cls_model=self.is_classification_model(), n_jobs=self.n_jobs, **kwargs
             )
-        alive_features, cut_list = self.features_by_random_tree_importance(cut_ratio)
-        self.colname_explain = alive_features
-        self.logger.info("cut   features by randomtree importance:%s. features...%s", len(cut_list), cut_list[:10])
-        self.logger.info("alive features by randomtree importance:%s. features...%s", self.colname_explain.shape[0], self.colname_explain)
+        alive_features, cut_features = self.features_by_random_tree_importance(cut_ratio)
+        self.update_features(cut_features, alive_features=alive_features) # 特徴量の更新
         self.logger.info("END")
 
 
@@ -200,11 +201,11 @@ class MyModel:
         self.logger.info("cut_ratio:%s", cut_ratio)
         if self.model is None:
             self.logger.raise_error("model is not set !!")
-        if self.feature_importances_randomtrees.shape[0] == 0:
-            self.logger.raise_error("feature_importances_randomtrees is None. You should do calc_randomtree_importance() first !!")
-        _n = int(self.feature_importances_randomtrees.shape[0] * cut_ratio)
-        alive_features = self.feature_importances_randomtrees.iloc[:-1*_n ]["feature_name"].values.copy()
-        cut_list       = self.feature_importances_randomtrees.iloc[ -1*_n:]["feature_name"].values.copy()
+        if self.df_feature_importances_randomtrees.shape[0] == 0:
+            self.logger.raise_error("df_feature_importances_randomtrees is None. You should do calc_randomtree_importance() first !!")
+        _n = int(self.df_feature_importances_randomtrees.shape[0] * cut_ratio)
+        alive_features = self.df_feature_importances_randomtrees.iloc[:-1*_n ]["feature_name"].values.copy()
+        cut_list       = self.df_feature_importances_randomtrees.iloc[ -1*_n:]["feature_name"].values.copy()
         self.logger.info("END")
         return alive_features, cut_list
 
@@ -641,17 +642,17 @@ class MyModel:
         df_conf, se_eval = self.eval_model(df_score, **eval_params)
         self.logger.info("evaluation model by train data.")
         
-        self.eval_train_cm  = df_conf.copy()
-        self.eval_train_val = se_eval.astype(str).copy()
-        self.logger.info("\n%s", self.eval_train_cm)
-        self.logger.info("\n%s", self.eval_train_val)
+        self.df_cm_train  = df_conf.copy()
+        self.se_eval_train = se_eval.astype(str).copy()
+        self.logger.info("\n%s", self.df_cm_train)
+        self.logger.info("\n%s", self.se_eval_train)
 
         # 特徴量の重要度
         self.logger.info("feature importance saving...")
         if is_callable(self.model, "feature_importances_") == True:
             _df = pd.DataFrame(np.array([self.colname_explain, self.model.feature_importances_]).T, columns=["feature_name","importance"])
             _df = _df.sort_values(by="importance", ascending=False).reset_index(drop=True)
-            self.feature_importances = _df.copy()
+            self.df_feature_importances = _df.copy()
 
         self.is_model_fit = True
         self.logger.info("END")
@@ -784,10 +785,10 @@ class MyModel:
             dfwk, _ = self.eval_model(dfwkwk, **eval_params)
             if _type == "test":
                 self.logger.info("evaluation model by validation data.")
-                self.eval_valid_cm  = dfwk.copy()
-                self.eval_valid_val = (df_eval["mean"].astype(str) + " +/- " + df_eval["std"].astype(str)).copy()
-                self.logger.info("\n%s", self.eval_valid_cm)
-                self.logger.info("\n%s", self.eval_valid_val)
+                self.df_cm_valid  = dfwk.copy()
+                self.se_eval_valid = (df_eval["mean"].astype(str) + " +/- " + df_eval["std"].astype(str)).copy()
+                self.logger.info("\n%s", self.df_cm_valid)
+                self.logger.info("\n%s", self.se_eval_valid)
 
         ## 最後に全データでモデルを作成しておく
         split_params["n_splits"] = 1
@@ -946,7 +947,6 @@ class MyModel:
         pred_params["n_jobs"] = self.n_jobs
             
         # 前処理の結果を反映する
-
         X = None
         if _X is None:
             X, _ = self.ndf_apply_preproc(df, x_proc=True, y_proc=False)
@@ -1031,8 +1031,8 @@ class MyModel:
 
         if store_eval == True:
             ## データを格納する場合(下手に上書きさせないためデフォルトはFalse)
-            self.eval_test_cm  = df_conf.copy()
-            self.eval_test_val = se_eval.copy()
+            self.df_cm_test  = df_conf.copy()
+            self.se_eval_test = se_eval.copy()
             ## テストデータの割合を格納
             if self.is_classification_model():
                 sewk = pd.DataFrame(Y_test.astype(int)).groupby(0).size().sort_index()
@@ -1101,12 +1101,12 @@ class MyModel:
         self.logger.info(f"model normal score is {eval_method}={score_normal_list.mean()} +/- {score_normal_list.std()}")
 
         # 特徴量をランダムに変化させて重要度を計算していく
-        self.feature_importances_modeling = pd.DataFrame(columns=["feature_name", "p_value", "t_value", \
+        self.df_feature_importances_modeling = pd.DataFrame(columns=["feature_name", "p_value", "t_value", \
                                                                   "score", "score_diff", "score_std"])
         ## 短縮のため、決定木モデルでimportanceが0の特徴量は事前に省く
         colname_except_list = np.array([])
-        if self.feature_importances.shape[0] > 0:
-            colname_except_list = self.feature_importances[self.feature_importances["importance"] == 0]["feature_name"].values.copy()
+        if self.df_feature_importances.shape[0] > 0:
+            colname_except_list = self.df_feature_importances[self.df_feature_importances["importance"] == 0]["feature_name"].values.copy()
         for i_colname, colname in enumerate(self.colname_explain):
             index_colname = df[self.colname_explain].columns.get_indexer([colname]).min()
             self.logger.debug("step : %s, feature is shuffled : %s", i_colname, colname)
@@ -1139,8 +1139,8 @@ class MyModel:
                                  _p, _t, score_random_list)
 
                 # 結果の格納
-                self.feature_importances_modeling = \
-                    self.feature_importances_modeling.append({"feature_name":colname, "p_value":_p, "t_value":_t, \
+                self.df_feature_importances_modeling = \
+                    self.df_feature_importances_modeling.append({"feature_name":colname, "p_value":_p, "t_value":_t, \
                                                               "score":score_random_list.mean(), \
                                                               "score_diff":score_normal - score_random_list.mean(), \
                                                               "score_std":score_random_list.std()}, ignore_index=True)
@@ -1150,8 +1150,8 @@ class MyModel:
                 ## 短縮する場合
                 self.logger.info("random score: omitted")
                 # 結果の格納
-                self.feature_importances_modeling = \
-                    self.feature_importances_modeling.append({"feature_name":colname, "p_value":np.nan, "t_value":np.nan, \
+                self.df_feature_importances_modeling = \
+                    self.df_feature_importances_modeling.append({"feature_name":colname, "p_value":np.nan, "t_value":np.nan, \
                                                               "score":np.nan, "score_diff":np.nan, "score_std":np.nan}, ignore_index=True)
         self.logger.info("END")
 
@@ -1236,9 +1236,9 @@ class MyModel:
                 f.write("colname_answer='"      +self.colname_answer+"'\n")
                 f.write("n_trained_samples="    +str(self.n_trained_samples)+"\n")
                 f.write("n_tested_samples="     +str(self.n_tested_samples)+"\n")
-                for x in self.eval_train_val.index: f.write("train_"+x+"="+str(self.eval_train_val[x])+"\n")
-                for x in self.eval_valid_val.index: f.write("validation_"+x+"="+str(self.eval_valid_val[x])+"\n")
-                for x in self.eval_test_val. index: f.write("test_"+x+"="+str(self.eval_test_val [x])+"\n")
+                for x in self.se_eval_train.index: f.write("train_"+x+"="+str(self.se_eval_train[x])+"\n")
+                for x in self.se_eval_valid.index: f.write("validation_"+x+"="+str(self.se_eval_valid[x])+"\n")
+                for x in self.se_eval_test. index: f.write("test_"+x+"="+str(self.se_eval_test [x])+"\n")
             # ログを保存
             with open(dir_path + self.name + ".log", mode='w') as f:
                 f.write(self.logger.internal_stream.getvalue())
@@ -1246,15 +1246,15 @@ class MyModel:
             for _x in self.fig.keys():
                 self.fig[_x].savefig(dir_path + self.name + "_" + _x + '.png')
             # CSVを保存
-            self.feature_importances_randomtrees.to_csv(dir_path + self.name + ".feature_importances_randomtrees.csv", encoding="shift-jis")
-            self.feature_importances_modeling   .to_csv(dir_path + self.name + ".feature_importances_modeling.csv",    encoding="shift-jis")
-            self.feature_importances            .to_csv(dir_path + self.name + ".feature_importances.csv",             encoding="shift-jis")
+            self.df_feature_importances_randomtrees.to_csv(dir_path + self.name + ".df_feature_importances_randomtrees.csv", encoding="shift-jis")
+            self.df_feature_importances_modeling   .to_csv(dir_path + self.name + ".df_feature_importances_modeling.csv",    encoding="shift-jis")
+            self.df_feature_importances            .to_csv(dir_path + self.name + ".df_feature_importances.csv",             encoding="shift-jis")
             self.df_pred_train.to_pickle(dir_path + self.name + ".predict_train.pickle")
             self.df_pred_valid.to_pickle(dir_path + self.name + ".predict_valid.pickle")
             self.df_pred_test. to_pickle(dir_path + self.name + ".predict_test.pickle")
-            self.eval_train_cm.to_csv(dir_path + self.name + ".eval_train_confusion_matrix.csv", encoding="shift-jis")
-            self.eval_valid_cm.to_csv(dir_path + self.name + ".eval_valid_confusion_matrix.csv", encoding="shift-jis")
-            self.eval_test_cm.to_csv( dir_path + self.name + ".eval_test_confusion_matrix.csv", encoding="shift-jis")
+            self.df_cm_train.to_csv(dir_path + self.name + ".eval_train_confusion_matrix.csv", encoding="shift-jis")
+            self.df_cm_valid.to_csv(dir_path + self.name + ".eval_valid_confusion_matrix.csv", encoding="shift-jis")
+            self.df_cm_test.to_csv( dir_path + self.name + ".eval_test_confusion_matrix.csv", encoding="shift-jis")
         self.logger.info("END")
 
 
@@ -1264,7 +1264,7 @@ class MyModel:
         Params::
             mode:
             0 : colname_explain をそのままコピー
-            1 : feature_importances があれば重要度0は省く
+            1 : df_feature_importances があれば重要度0は省く
             2 : 追加の特徴量がある事を考慮して, 読み込む対象のmymodelのcolname_explain_firstと比較して追加する
             3 : 読み込む対象のcolname_explainにあって、現モデルのcolname_explainにないカラムは省く
         """
@@ -1275,7 +1275,7 @@ class MyModel:
             self.colname_explain = mymodel.colname_explain.copy()
         elif mode == 1:
             self.colname_explain = mymodel.colname_explain.copy()
-            df = mymodel.feature_importances.copy()
+            df = mymodel.df_feature_importances.copy()
             if df.shape[0] > 0:
                 # 除外リストを作成し、除外対象以外の特徴量を残す
                 colname_list = df[(df["importance"].isna()) | (df["importance"] == 0)]["feature_name"].values
