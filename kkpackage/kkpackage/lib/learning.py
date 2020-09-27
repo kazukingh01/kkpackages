@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
+from typing import List
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, OneHotEncoder
 from sklearn.decomposition import PCA
+from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 
 # local package
 from kkpackage.util.common import check_type, is_callable
@@ -13,7 +15,6 @@ logger = set_logger(__name__)
 class ProcRegistry(object):
     def __inti__(self, colname_explain: np.ndarray, colname_answer: np.ndarray):
         super().__init__()
-        self.colname_explain = colname_explain
         self.processing = {}
         self.default_proc(colname_explain, colname_answer)
 
@@ -30,30 +31,57 @@ class ProcRegistry(object):
         self.processing["default_y"]["type"] = "y"
         self.processing["default_y"]["cols"] = colname_answer
         self.processing["default_y"]["proc"] = []
+        self.processing["default_row"] = {}
+        self.processing["default_row"]["type"] = "row"
+        self.processing["default_row"]["cols"] = None
+        self.processing["default_row"]["proc"] = []
         logger.info("END")
 
 
-    def __call__(self, df: pd.DataFrame):
+    def __call__(self, df: pd.DataFrame, autofix: bool=False, x_proc: bool=True, y_proc: bool=True):
         logger.info("START")
+        # row proc
+        df = self.proc_row(df)
+        # col proc
         list_x, list_y = [], []
         for name in self.processing.keys():
+            if self.processing[name]["type"] not in ["x", "y"]: continue
+            if x_proc == False and self.processing[name]["type"] == "x": continue
+            if y_proc == False and self.processing[name]["type"] == "y": continue
             logger.info(f'name: {name}, type: {self.processing[name]["type"]}')
             ndf = df[self.processing[name]["cols"]].values.copy()
             for _proc in self.processing[name]["proc"]:
+                logger.info(f"before shape: {ndf.shape}")
                 ndf = _proc(ndf)
+                logger.info(f"after  shape: {ndf.shape}")
             if   self.processing[name]["type"] == "x": list_x.append(ndf)
             elif self.processing[name]["type"] == "y": list_y.append(ndf)
+        if autofix:
+            if len(list_x) == 1: list_x = list_x[0]
+            if len(list_y) == 1: list_y = list_y[0]
         logger.info("END")
         return list_x, list_y
+    
+
+    def proc_row(self, df: pd.DataFrame) -> pd.SparseDataFrame:
+        logger.info("START")
+        df = df.copy()
+        for name in self.processing.keys():
+            if self.processing[name]["type"] not in ["row"]: continue
+            logger.info(f'name: {name}, type: {self.processing[name]["type"]}')
+            for _proc in self.processing[name]["proc"]:
+                df = _proc(df)
+        logger.info("END")
+        return df
 
 
-    def register(self, list_proc: list, name: str, type_proc: str=None):
+    def register(self, list_proc: list, name: str, type_proc: str=None, columns: np.ndarray=None):
         """
         処理を登録する. 登録名が新規の場合は新たにprocessingを登録する
         Params::
             list_proc: callable な関数やクラスのリスト
             name: 登録処理名
-            type_proc: "x" or "y"
+            type_proc: "x" or "y". rowの場合、default_rowに追加するのみとする
         """
         logger.info("START")
         if name not in list(self.processing.keys()):
@@ -61,6 +89,7 @@ class ProcRegistry(object):
                 logger.raise_error(f'type_proc must be "x" or "y". type_proc: {type_proc}')
             self.processing[name] = {}
             self.processing[name]["type"] = type_proc
+            self.processing[name]["cols"] = columns
             self.processing[name]["proc"] = []
         for _proc in list_proc:
             self.processing[name]["proc"].append(_proc)
@@ -72,6 +101,7 @@ class ProcRegistry(object):
         登録した処理に関するパラメータを学習するため、入力データを基準にfittingさせる
         """
         logger.info("START")
+        df = self.proc_row(df) # row proc
         for name in self.processing.keys():
             logger.info(f'name: {name}, type: {self.processing[name]["type"]}')
             ndf = df[self.processing[name]["cols"]].values.copy()
@@ -135,142 +165,76 @@ class MyReplaceValue:
     def __init__(self, target_value: object, replace_value: object):
         self.target_value  = target_value
         self.replace_value = replace_value
-    def __calll__(self, ndf: np.ndarray):
+    def __call__(self, ndf: np.ndarray):
         ndf = ndf.copy()
         ndf[ndf == self.target_value] = self.replace_value
         return ndf
 
 class MyOneHotEncoder:
+    def __init__(self, target_indexes: List[int]):
+        check_type(target_indexes, [list, tuple])
+        self.target_indexes = target_indexes
+        self.model = OneHotEncoder(categories='auto')
+    def __call__(self, ndf: np.ndarray):
+        bool_col = np.zeros(ndf.shape[1]).astype(bool)
+        bool_col[self.target_indexes] = True
+        output = self.model.transform(ndf[:, bool_col].copy()).toarray()
+        ndf = ndf[:, ~bool_col].copy()
+        ndf = np.concatenate([ndf, output], axis=1)
+        return ndf
+    def fit(self, ndf: np.ndarray):
+        self.model.fit(ndf)
+
+
+class Calibrater:
+    """
+    CalibratedClassifierCVは交差検証時にValidaionデータでfittingを行う
+    本クラスでは独自に交差検証を実装しているため、交差するのが面倒くさい
+    なので、入力X(predict_proba)に対して、そのままpredict_probaが帰ってくるような
+    擬似sklearnクラスを自作する
+    """
+    class _MockCalibrater:
+        def __init__(self, classes):
+            self.classes_ = classes
+        def predict_proba(self, X):
+            return X
+        def __str__(self):
+            return "MockCalibrater"
+
     def __init__(self, model):
-        self.model = model
-    def transform(self, X):
-        # Xはnumpy形式の想定
-        ndf = X.copy()
-        ndf = self.model.transform(ndf).toarray()
-        return ndf
-    def pre_proc_one_hot_encoder(self, df, target="y"):
-        self.logger.info("START")
-        self.logger.info("Regist pre_proc_ No.%s, df shape:%s", len(self.preprocessing_name[target]), df.shape)
-
-        # 登録されている処理があれば先に実行する
-        ndf = self.preprocessing(df, target=target)
-        # 処理の登録とFit
-        ohe = OneHotEncoder(categories='auto')
-        ohe.fit(ndf)
-        mypreproc = self.MyOneHotEncoder(ohe)
-        self.preprocessing_name[ target].append("OneHotEncoder()")
-        self.preprocessing_model[target].append(mypreproc)
-        self.logger.info("END")
-
-
-
-
-    def preprocessing(self, df: pd.DataFrame, target: str="x"):
         """
-        pre proc に登録された処理を逐次的に行う
-        基本的に特徴量数やレコード数の変動は考慮しない。値の変換を想定する
-        """
-        self.logger.info("START")
-        self.logger.info(f"df shape:{df.shape}, target={target}")
-        self.logger.info(f"features:{self.colname_explain.shape}")
-
-        ndf = None
-        # 初期処理として下記を実行
-        if self.preprocessing_init_col.get(target) is None:
-            self.logger.raise_error(f"unexpected target:{target} !!")
-
-        init_col = self.preprocessing_init_col[target]
-        self.logger.info(f"pre processing {target} No.-1: convert to numpy value")
-        ## ここで当初float32に強制変換していたが、その場合categorical変数にしたいint型も
-        ## float型になり、またnumpyの全体の型がfloatだとintの列は作成できないため、
-        ## catboostのcategorycalが使えなかった。しかし型がバラバラでobject型に変換されると
-        ## どうしてもメモリが圧迫される。そのため登録処理の最初が型変換の場合は、この時点で処理させる。
-        ndf = None
-        if (len(self.preprocessing_name[target]) > 0) and \
-           (self.preprocessing_name[target][0].find("ConvertCulumnType") == 0) and \
-           (self.preprocessing_model[target][0].target_indexes is None):
-            if type(init_col) == str:
-                ndf = df[self.__getattribute__(init_col)].copy() \
-                      .astype(self.preprocessing_model[target][0].convert_type).values
-            else:
-                ndf = df[init_col].copy() \
-                      .astype(self.preprocessing_model[target][0].convert_type).values
-        else:
-            # 以前はobjectに強制変換していたが、objectの場合
-            # np.isnan(ndf)のような全体に対しての変換ができないためやめる。
-            # dfに様々な型が混在していた場合、valuesで自然とobject型になる
-            if type(init_col) == str:
-                ndf = df[self.__getattribute__(init_col)].copy().values
-            else:
-                ndf = df[init_col].copy().values
-        
-        # 1次元の場合はreshapeする
-        if len(ndf.shape) == 1:
-            ndf = ndf.reshape(-1, 1)
-        
-        # 登録された処理を最初から実行する(np.float32, inf の変換はここで)
-        ## 上記でastypeされてももう一度実行する
-        for i, _proc in enumerate(self.preprocessing_model[target]):
-            self.logger.info(f"pre processing {target} No.{target}: {self.preprocessing_name[target][i]}, shape from:{ndf.shape}, type: {ndf.dtype}")
-            ndf = _proc.transform(ndf)
-            self.logger.info(f"pre processing {target} No.{target}: {self.preprocessing_name[target][i]}, shape from:{ndf.shape}, type: {ndf.dtype}")
-        self.logger.info("END")
-        return ndf
-
-
-    def add_preprocessing_target(self, target: str, target_type: str, init_col):
-        """
-        別口で入力Xを作成する場合の関数
-        """
-        self.logger.info("START")
-        self.logger.info(f"add target. name:{target}, type:{target_type}, init_col:{init_col}")
-        # 新規に登録できるかチェックする
-        if target in list(self.preprocessing_name.keys()):
-            self.logger.raise_error("preproc name is already registerd !! Chage name.")
-
-        self.preprocessing_name[ target] = [] #処理名
-        self.preprocessing_model[target] = [] #処理内容
-        if target_type in ["x","y"]:
-            self.preprocessing_addlist.append(tuple([target_type, target]))
-        else:
-            # x, y以外の登録はNG.
-            self.logger.raise_error("target is 'x' or 'y' !!")
-        # 処理対象初期カラム名(strの場合はself.__getattr__()で取得)
-        if (type(init_col) == str) or (init_col == np.ndarray):
-            self.preprocessing_init_col[target] = init_col
-        else:
-            self.logger.raise_error("init_col's type is str or numpy !!")
-
-        self.logger.info("END")
-
-
-
-
-
-
-
-
-    def ndf_apply_preproc(self, df: pd.DataFrame, x_proc: bool=True, y_proc: bool=True) -> List[np.ndarray]:
-        """
-        登録されたpre_proc_の処理を実行して特徴量と正解ラベルのndarrayを作成する
         Params::
-            df: input
-            y_proc: 正解ラベル側のprocを処理するかどうか
+            model: Fitting済みのmodel
         """
-        X = self.preprocessing(df, target="x") if x_proc else None
-        Y = self.preprocessing(df, target="y") if y_proc else None
+        self.model    = model
+        self.classes_ = self.model.classes_
+        self.mock_calibrater = self._MockCalibrater(self.model.classes_)
+        self.calibrater      = CalibratedClassifierCV(self.mock_calibrater, cv="prefit", method='isotonic')
 
-        # 個別に追加定義したtargetがあれば作成する
-        X_add, Y_add = [], []
-        for _type, _name in self.preprocessing_addlist:
-            ndf = self.preprocessing(df, target=_name)
-            # preproc が x か y なのかで分ける
-            if   _type == "x" and x_proc: X_add.append(ndf.copy())
-            elif _type == "y" and y_proc: Y_add.append(ndf.copy())
+    def __str__(self):
+        return str(self.calibrater)
 
-        # _add があればくっつける
-        X = [X, *X_add]
-        Y = [Y, *Y_add]
+    def fit(self, X, Y):
+        """
+        ここで入力するXはpredict_proba である. 実際の特徴量ではない点注意
+        """
+        self.calibrater.fit(X, Y)
 
-        return X, Y
+    def predict_proba_mock(self, X):
+        """
+        ここで入力するXはpredict_proba である. 実際の特徴量ではない点注意
+        """
+        return self.calibrater.predict_proba(X)
+
+    def predict_proba(self, X):
+        """
+        ここで入力するXは実際の特徴量である
+        """
+        return self.calibrater.predict_proba(self.model.predict_proba(X))
+        
+    def predict(self, X):
+        """
+        ここで入力するXは実際の特徴量である
+        """
+        return self.calibrater.predict(self.model.predict_proba(X))
 

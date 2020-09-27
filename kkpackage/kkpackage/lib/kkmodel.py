@@ -11,6 +11,7 @@ from sklearn.metrics import roc_curve, auc
 import matplotlib.pyplot as plt
 
 # local package
+from kkpackage.lib.learning import ProcRegistry, Calibrater
 from kkpackage.util.learning import search_features_by_variance, search_features_by_correlation, \
     split_data_balance, predict_detail, evalate, eval_classification_model, eval_regressor_model, \
     is_classification_model, conv_validdata_in_fitparmas, calc_randomtree_importance
@@ -37,11 +38,9 @@ class MyModel:
     ):
         self.logger = set_logger(_logname + "." + name, log_level=log_level, internal_log=True)
         self.logger.debug("START")
-
         self.name        = name
         self.random_seed = random_seed
         self.n_jobs      = n_jobs
-        self.colname_explain_first = conv_ndarray(colname_explain)
         self.colname_explain       = conv_ndarray(colname_explain)
         self.colname_explain_hist  = []
         self.colname_answer        = colname_answer
@@ -50,19 +49,10 @@ class MyModel:
         self.df_feature_importances_randomtrees = pd.DataFrame()
         self.df_feature_importances_modeling    = pd.DataFrame()
         self.model          = model
+        self.is_model_fit   = False
         self.calibrater     = None
         self.is_calibration = False
-        self.is_model_fit = False
-        self.preprocessing_name     = {}
-        self.preprocessing_model    = {}
-        self.preprocessing_init_col = {}
-        self.preprocessing_addlist  = []
-        self.preprocessing_name[    "x"] = []
-        self.preprocessing_model[   "x"] = []
-        self.preprocessing_name[    "y"] = []
-        self.preprocessing_model[   "y"] = []
-        self.preprocessing_init_col["x"] = "colname_explain"
-        self.preprocessing_init_col["y"] = "colname_answer"
+        self.preproc        = ProcRegistry(self.colname_explain, np.ndarray([self.colname_answer]))
         self.n_trained_samples = {}
         self.n_tested_samples  = {}
         self.index_train = np.array([]) # 実際に残す際はマルチインデックスかもしれないので、numpy形式にはならない
@@ -100,11 +90,11 @@ class MyModel:
             **params: その他インスタンスに追加したい変数
         """
         self.logger.debug("START")
-        self.model = model
-        self.optuna_study          = None
-        self.calibrater            = None
-        self.is_calibration        = False
-        self.is_model_fit          = False
+        self.model          = model
+        self.optuna_study   = None
+        self.calibrater     = None
+        self.is_calibration = False
+        self.is_model_fit   = False
         for param in params.keys():
             # 追加のpreprocessingを扱う場合など
             self.__setattr__(param, params.get(param))
@@ -210,362 +200,11 @@ class MyModel:
         return alive_features, cut_list
 
 
-    def preprocessing(self, df: pd.DataFrame, target: str="x"):
-        """
-        pre proc に登録された処理を逐次的に行う
-        基本的に特徴量数やレコード数の変動は考慮しない。値の変換を想定する
-        """
-        self.logger.info("START")
-        self.logger.info(f"df shape:{df.shape}, target={target}")
-        self.logger.info(f"features:{self.colname_explain.shape}")
-
-        ndf = None
-        # 初期処理として下記を実行
-        if self.preprocessing_init_col.get(target) is None:
-            self.logger.raise_error(f"unexpected target:{target} !!")
-
-        init_col = self.preprocessing_init_col[target]
-        self.logger.info(f"pre processing {target} No.-1: convert to numpy value")
-        ## ここで当初float32に強制変換していたが、その場合categorical変数にしたいint型も
-        ## float型になり、またnumpyの全体の型がfloatだとintの列は作成できないため、
-        ## catboostのcategorycalが使えなかった。しかし型がバラバラでobject型に変換されると
-        ## どうしてもメモリが圧迫される。そのため登録処理の最初が型変換の場合は、この時点で処理させる。
-        ndf = None
-        if (len(self.preprocessing_name[target]) > 0) and \
-           (self.preprocessing_name[target][0].find("ConvertCulumnType") == 0) and \
-           (self.preprocessing_model[target][0].target_indexes is None):
-            if type(init_col) == str:
-                ndf = df[self.__getattribute__(init_col)].copy() \
-                      .astype(self.preprocessing_model[target][0].convert_type).values
-            else:
-                ndf = df[init_col].copy() \
-                      .astype(self.preprocessing_model[target][0].convert_type).values
-        else:
-            # 以前はobjectに強制変換していたが、objectの場合
-            # np.isnan(ndf)のような全体に対しての変換ができないためやめる。
-            # dfに様々な型が混在していた場合、valuesで自然とobject型になる
-            if type(init_col) == str:
-                ndf = df[self.__getattribute__(init_col)].copy().values
-            else:
-                ndf = df[init_col].copy().values
-        
-        # 1次元の場合はreshapeする
-        if len(ndf.shape) == 1:
-            ndf = ndf.reshape(-1, 1)
-        
-        # 登録された処理を最初から実行する(np.float32, inf の変換はここで)
-        ## 上記でastypeされてももう一度実行する
-        for i, _proc in enumerate(self.preprocessing_model[target]):
-            self.logger.info(f"pre processing {target} No.{target}: {self.preprocessing_name[target][i]}, shape from:{ndf.shape}, type: {ndf.dtype}")
-            ndf = _proc.transform(ndf)
-            self.logger.info(f"pre processing {target} No.{target}: {self.preprocessing_name[target][i]}, shape from:{ndf.shape}, type: {ndf.dtype}")
-        self.logger.info("END")
-        return ndf
-
-
-    def add_preprocessing_target(self, target: str, target_type: str, init_col):
-        """
-        別口で入力Xを作成する場合の関数
-        """
-        self.logger.info("START")
-        self.logger.info(f"add target. name:{target}, type:{target_type}, init_col:{init_col}")
-        # 新規に登録できるかチェックする
-        if target in list(self.preprocessing_name.keys()):
-            self.logger.raise_error("preproc name is already registerd !! Chage name.")
-
-        self.preprocessing_name[ target] = [] #処理名
-        self.preprocessing_model[target] = [] #処理内容
-        if target_type in ["x","y"]:
-            self.preprocessing_addlist.append(tuple([target_type, target]))
-        else:
-            # x, y以外の登録はNG.
-            self.logger.raise_error("target is 'x' or 'y' !!")
-        # 処理対象初期カラム名(strの場合はself.__getattr__()で取得)
-        if (type(init_col) == str) or (init_col == np.ndarray):
-            self.preprocessing_init_col[target] = init_col
-        else:
-            self.logger.raise_error("init_col's type is str or numpy !!")
-
-        self.logger.info("END")
-
-
-    # 正規化(最小値 ～ 最大値)
-    def pre_proc_min_max_scaler(self, df: pd.DataFrame, feature_range: (int, int) = (0, 1), target :str="x"):
-        self.logger.info("START")
-        self.logger.info("Regist pre_proc_ No.%s, df shape:%s", \
-                         len(self.preprocessing_name[target]), df.shape)
-
-        # 登録されている処理があれば先に実行する
-        ndf = self.preprocessing(df, target=target)
-        # 処理の登録とFit
-        mm = MinMaxScaler(feature_range=feature_range)
-        mm.fit(ndf)
-        self.preprocessing_name[ target].append("MinMaxScaler(feature_range="+str(feature_range)+")")
-        self.preprocessing_model[target].append(mm)
-        self.logger.info("END")
-        
-
-    # 標準化
-    def pre_proc_standard_scaler(self, df: pd.DataFrame, target: str="x"):
-        self.logger.info("START")
-        self.logger.info("Regist pre_proc_ No.%s, df shape:%s", \
-                         len(self.preprocessing_name[target]), df.shape)
-
-        # 登録されている処理があれば先に実行する
-        ndf = self.preprocessing(df, target=target)
-        # 処理の登録とFit
-        ss = StandardScaler()
-        ss.fit(ndf)
-        self.preprocessing_name[ target].append("StandardScaler()")
-        self.preprocessing_model[target].append(ss)
-        self.logger.info("END")
-
-
-    # PCAで次元削減(次元が変化するので注意)
-    def pre_proc_pca(self, df: pd.DataFrame, pca_cutoff: float=0.99, target: str="x"):
-        self.logger.info("START")
-        self.logger.info("Regist pre_proc_ No.%s, df shape:%s, cutoff:%s", \
-                         len(self.preprocessing_name[target]), df.shape, pca_cutoff)
-
-        # まずは標準化(既にしていてももう一回する)
-        self.pre_proc_standard_scaler(df)
-        
-        # 登録されている処理があれば先に実行する
-        ndf = self.preprocessing(df, target=target)
-        # 処理の登録とFit
-        pca = PCA(n_components=pca_cutoff)
-        pca.fit(ndf)
-        self.preprocessing_name[ target].append("PCA(n_components=)"+str(pca_cutoff))
-        self.preprocessing_model[target].append(pca)
-
-        self.logger.info("END")
-
-
-    # 穴埋め処理
-    class MyFillNa:
-        def __init__(self, fill_value):
-            self.fill_value = fill_value
-            self.fit_values = None
-        def fit(self, X):
-            if   (type(self.fill_value) == str) and (self.fill_value == "mean"):
-                self.fit_values = np.nanmean(X, axis=0).copy()
-            elif (type(self.fill_value) == str) and (self.fill_value == "max"):
-                self.fit_values = np.nanmax(X, axis=0).copy()
-            elif (type(self.fill_value) == str) and (self.fill_value == "min"):
-                self.fit_values = np.nanmin(X, axis=0).copy()
-            else:
-                pass
-        def transform(self, X):
-            # Xはnumpy形式の想定
-            ndf = X.copy()
-            if (type(self.fill_value) == str):
-                # 縦列毎にループして欠損補完する
-                for i in np.arange(ndf.shape[1]):
-                    ndf[:, i][np.isnan(ndf[:, i])] = self.fit_values[i]
-            else:
-                ndf[np.isnan(ndf)] = self.fill_value
-            return ndf
-    def pre_proc_fillna(self, df: pd.DataFrame, fill_value, target: str="x"):
-        self.logger.info("START")
-        self.logger.info("Regist pre_proc_ No.%s, df shape:%s, fill_value:%s", \
-                         len(self.preprocessing_name[target]), df.shape, fill_value)
-
-        # 登録されている処理があれば先に実行する
-        ndf = self.preprocessing(df, target=target)
-        # 処理の登録
-        mypreproc = self.MyFillNa(fill_value)
-        mypreproc.fit(ndf)
-        self.preprocessing_name[ target].append("FillNa, fill_value="+str(fill_value))
-        self.preprocessing_model[target].append(mypreproc)
-        self.logger.info("END")
-
-
-    # 置き換え処理
-    class MyReplaceValue:
-        def __init__(self, target_value, replace_value):
-            self.target_value  = target_value
-            self.replace_value = replace_value
-        def transform(self, X):
-            # Xはnumpy形式の想定
-            ndf = X.copy()
-            ndf[ndf == self.target_value] = self.replace_value
-            return ndf
-    def pre_proc_replace_value(self, df: pd.DataFrame, target_value, replace_value, target: str="x"):
-        self.logger.info("START")
-        self.logger.info("Regist pre_proc_ No.%s, df shape:%s, target_value:%s, replace_value:%s", \
-                         len(self.preprocessing_name[target]), df.shape, target_value, replace_value)
-
-        # 処理の登録
-        mypreproc = self.MyReplaceValue(target_value, replace_value)
-        self.preprocessing_name[ target].append("ReplaceVal, target_value="+str(target_value)+\
-                                                ", replace_value="+str(replace_value))
-        self.preprocessing_model[target].append(mypreproc)
-        self.logger.info("END")
-
-
-    # 型変換処理
-    class MyConvertCulumnType:
-        def __init__(self, convert_type, target_indexes=None):
-            self.convert_type   = convert_type
-            self.target_indexes = target_indexes
-        def transform(self, X):
-            # Xはnumpy形式の想定
-            ndf = X.copy()
-            if self.target_indexes is None:
-                ndf = ndf.astype(self.convert_type)
-            else:
-                if ndf.dtype != np.object: raise TypeError
-                ndf[:, self.target_indexes] = ndf[:, self.target_indexes].astype(self.convert_type)
-            return ndf
-    def pre_proc_convert_culumn_type(self, df: pd.DataFrame, convert_type, target_indexes=None, target: str="x"):
-        self.logger.info("START")
-        self.logger.info("Regist pre_proc_ No.%s, df shape:%s, convert_type:%s, target_indexes:%s", \
-                         len(self.preprocessing_name[target]), df.shape, convert_type, target_indexes)
-
-        # target_indexesが文字列で来た場合はnumpyでのindexに変換する
-        # indexは数値か数値のリストを要求する
-        if target_indexes is not None:
-            if   type(target_indexes) == int:
-                pass
-            elif type(target_indexes) == str:
-                self.logger.raise_error(f"target_indexes: {target_indexes} is not match type.", TypeError)
-            elif (type(target_indexes) == list) or (type(target_indexes) == np.ndarray):
-                for _x in target_indexes:
-                    if type(_x) == str: self.logger.raise_error(f"target_indexes: {target_indexes} is not match type.", TypeError)
-                    else: int(str(_x)) # floatだったらエラーになる
-            else:
-                self.logger.raise_error(f"target_indexes: {target_indexes} is not match type.", TypeError)
-
-        # 処理の登録
-        mypreproc = self.MyConvertCulumnType(convert_type, target_indexes)
-        self.preprocessing_name[ target].append("ConvertCulumnType, convert_type="+str(convert_type)+\
-                                                ", target_indexes="+str(target_indexes))
-        self.preprocessing_model[target].append(mypreproc)
-        self.logger.info("END")
-
-
-    # サイズ変換処理
-    class MyReshape:
-        def __init__(self, reshape):
-            self.reshape = reshape
-        def transform(self, X):
-            # Xはnumpy形式の想定
-            ndf = X.copy()
-            if (type(self.reshape) == type(np.array([]))):
-                if   len(self.reshape.shape) == 1:
-                    ndf = ndf[:, self.reshape]
-                elif len(self.reshape.shape) == 2:
-                    # RNN用に変換する. DataFrameを経由して変換させる
-                    df = pd.DataFrame(index=np.arange(ndf.shape[0]))
-                    for i, index in enumerate(self.reshape):
-                        dfwk  = pd.DataFrame(ndf[:, index])
-                        df[i] = dfwk.apply(lambda x: x.values,axis=1).copy()
-                    # 左列から順に時系列順になっている.DataFrameでapplyしてvstackする
-                    ## この時点で各レコードには、[[a,b,c,..], [a,b,c,..], [a,b,c,..],..]の二次元配列化される
-                    df = df.apply(lambda x: np.vstack(x), axis=1)
-                    # さらに全体をvstackしてreshapeする
-                    ndf = np.vstack(df.values)
-                    ndf = ndf.reshape(X.shape[0], self.reshape.shape[0], \
-                                      self.reshape.shape[1]) # データ数×時系列数×特徴量数
-            else:
-                ndf = ndf.reshape(self.reshape)
-            return ndf
-        def fit(self, X):
-            # 変換可能かチェックする
-            if (type(self.reshape) == type(np.array([]))):
-                # numpy形式の場合、RNN用時系列データへの変換を意味する
-                # さらにその中身も配列で縦列のインデックス(int型)が入っていることを想定する
-                # [[1,2,3,4,5],
-                #  [2,3,4,5,6],
-                #  [3,4,5,6,7]] みたいな
-                # 1次元[1,2,3,4,5]の場合は、その列を抽出する役割とする
-                if len(self.reshape.shape) > 2:
-                    print("mismatch type !!")
-                    raise TypeError
-                elif (self.reshape.dtype != np.int):
-                    print("mismatch type !!")
-                    raise TypeError
-                elif not ((self.reshape.max() < X.shape[1]) and (self.reshape.min() >= 0)):
-                    print("mismatch type !!")
-                    raise TypeError
-            elif (type(self.reshape) == type(())):
-                # tuple の場合. 普通にreshapeに突っ込む
-                pass
-            elif (type(self.reshape) == int) and (self.reshape == -1):
-                # -1 の場合. 普通にreshapeに突っ込む
-                pass
-            else:
-                print("mismatch type !!")
-                raise TypeError
-    def pre_proc_reshape(self, df: pd.DataFrame, reshape, target="y"):
-        self.logger.info("START")
-        self.logger.info("Regist pre_proc_ No.%s, df shape:%s, reshape:%s", \
-                         len(self.preprocessing_name[target]), df.shape, reshape)
-
-        # 登録されている処理があれば先に実行する
-        ndf = self.preprocessing(df, target=target)
-        # 処理の登録
-        mypreproc = self.MyReshape(reshape)
-        mypreproc.fit(ndf) # エラーがあるかチェックする
-        self.preprocessing_name[ target].append("Reshape, reshape="+str(reshape))
-        self.preprocessing_model[target].append(mypreproc)
-        self.logger.info("END")
-
-
-    # One Hot Encoder. 主に正解ラベルに対して
-    class MyOneHotEncoder:
-        def __init__(self, model):
-            self.model = model
-        def transform(self, X):
-            # Xはnumpy形式の想定
-            ndf = X.copy()
-            ndf = self.model.transform(ndf).toarray()
-            return ndf
-    def pre_proc_one_hot_encoder(self, df, target="y"):
-        self.logger.info("START")
-        self.logger.info("Regist pre_proc_ No.%s, df shape:%s", len(self.preprocessing_name[target]), df.shape)
-
-        # 登録されている処理があれば先に実行する
-        ndf = self.preprocessing(df, target=target)
-        # 処理の登録とFit
-        ohe = OneHotEncoder(categories='auto')
-        ohe.fit(ndf)
-        mypreproc = self.MyOneHotEncoder(ohe)
-        self.preprocessing_name[ target].append("OneHotEncoder()")
-        self.preprocessing_model[target].append(mypreproc)
-        self.logger.info("END")
-
-
-    def ndf_apply_preproc(self, df: pd.DataFrame, x_proc: bool=True, y_proc: bool=True) -> List[np.ndarray]:
-        """
-        登録されたpre_proc_の処理を実行して特徴量と正解ラベルのndarrayを作成する
-        Params::
-            df: input
-            y_proc: 正解ラベル側のprocを処理するかどうか
-        """
-        X = self.preprocessing(df, target="x") if x_proc else None
-        Y = self.preprocessing(df, target="y") if y_proc else None
-
-        # 個別に追加定義したtargetがあれば作成する
-        X_add, Y_add = [], []
-        for _type, _name in self.preprocessing_addlist:
-            ndf = self.preprocessing(df, target=_name)
-            # preproc が x か y なのかで分ける
-            if   _type == "x" and x_proc: X_add.append(ndf.copy())
-            elif _type == "y" and y_proc: Y_add.append(ndf.copy())
-
-        # _add があればくっつける
-        X = [X, *X_add]
-        Y = [Y, *Y_add]
-
-        return X, Y
-
-
     def eval_model(self, df_score, **eval_params) -> (pd.DataFrame, pd.Series, ):
         """
         回帰や分類を意識せずに評価値を出力する
         """
-        df_conf, se_eval = pd.DataFrame(), pd.Series()
+        df_conf, se_eval = pd.DataFrame(), pd.Series(dtype=object)
         if self.is_classification_model():
             df_conf, se_eval = eval_classification_model(df_score, "answer", "predict", ["predict_proba_"+str(int(_x)) for _x in self.model.classes_], labels=self.model.classes_, **eval_params)
         else:
@@ -592,10 +231,9 @@ class MyModel:
         fit_params   = fit_params.  copy() if fit_params   is not None else {}
         eval_params  = eval_params. copy() if eval_params  is not None else {}
         pred_params  = pred_params. copy() if pred_params  is not None else {}
-        split_params["random_seed"] = self.random_seed
 
         # numpyに変換(前処理の結果を反映させる)
-        X_train, Y_train = self.ndf_apply_preproc(df_train)
+        X_train, Y_train = self.preproc(df_train)
 
         ## データのスプリット
         split_params["random_seed"] = self.random_seed
@@ -621,7 +259,7 @@ class MyModel:
         ## (新)色々あったが、上記は無視してtupleならtupleでそのまま渡す
         self.model.fit(X_train, Y_train, **fit_params)
         if self.is_classification_model():
-            # np.bincount(Y_train.astype(int)) だと マイナスの値でエーが出る
+            # np.bincount(Y_train.astype(int)) だと マイナスの値でエラーが出る
             sewk = pd.DataFrame(Y_train.astype(int)).groupby(0).size().sort_index()
             if is_callable(self.model, "classes_") == False:
                 ## classes_ がない場合は手動で追加する
@@ -644,8 +282,7 @@ class MyModel:
         
         self.df_cm_train  = df_conf.copy()
         self.se_eval_train = se_eval.astype(str).copy()
-        self.logger.info("\n%s", self.df_cm_train)
-        self.logger.info("\n%s", self.se_eval_train)
+        self.logger.info(f'\n{self.df_cm_train}\n{self.se_eval_train}')
 
         # 特徴量の重要度
         self.logger.info("feature importance saving...")
@@ -658,9 +295,6 @@ class MyModel:
         self.logger.info("END")
 
 
-    # セットしたモデルで交差検証
-    ## _fit_params で _validation_x, _validation_y が記載された場合は
-    ## Validation での 検証分の値を渡すこととする
     def fit_cross_validation(
             self, df_train: pd.DataFrame, 
             save_traindata: bool=False, 
@@ -694,11 +328,11 @@ class MyModel:
                 predict_detail など参照
         """
         self.logger.info("START")
-        self.logger.info("df shape:%s, save_traindata:%s, split_params:%s, "+\
-                         "fit_params:%s, eval_params:%s, pred_params:%s.", \
-                         df_train.shape, save_traindata, \
-                         split_params, fit_params, eval_params, pred_params)
-        self.logger.info("features:%s", self.colname_explain.shape)
+        self.logger.info(
+            f'df shape: {df_train.shape}, save_traindata: {save_traindata}, conv_autostop: {conv_autostop}, split_params: {split_params}' +
+            f'fit_params: {fit_params}, fit_params_train: {fit_params_train}, eval_params: {eval_params}, pred_params: {pred_params}'
+        )
+        self.logger.info(f"features: {self.colname_explain.shape}")
         if self.model is None:
             self.logger.raise_error("model is not set.")
 
@@ -706,10 +340,9 @@ class MyModel:
         fit_params   = fit_params.  copy() if fit_params   is not None else {}
         eval_params  = eval_params. copy() if eval_params  is not None else {}
         pred_params  = pred_params. copy() if pred_params  is not None else {}
-        split_params["random_seed"] = self.random_seed
 
         # numpyに変換(前処理の結果を反映する
-        X_train, Y_train = self.ndf_apply_preproc(df_train)
+        X_train, Y_train = self.preproc(df_train)
 
         ## データのスプリット
         split_params["random_seed"] = self.random_seed
@@ -810,49 +443,8 @@ class MyModel:
         self.logger.info("END")
 
 
-    # CalibratedClassifierCVは交差検証時にValidaionデータでfittingを行う
-    # 本クラスでは独自に交差検証を実装しているため、交差するのが面倒くさい
-    # なので、入力X(predict_proba)に対して、そのままpredict_probaが帰ってくるような
-    # 擬似機械学習アルゴリズムを自作する
-    class MyCalibrater:
-        class _MockCalibrater:
-            def __init__(self, classes):
-                self.classes_ = classes
-            def predict_proba(self, X):
-                return X
-            def __str__(self):
-                return "MockCalibrater"
 
-        def __init__(self, model):
-            self.model    = model
-            self.classes_ = self.model.classes_
-            self.mock_calibrater = self._MockCalibrater(self.model.classes_)
-            self.calibrater      = CalibratedClassifierCV(self.mock_calibrater, cv="prefit", method='isotonic')
-
-        def __str__(self):
-            return str(self.calibrater)
-            
-
-        # ここで入力するXはpredict_proba である
-        # 実際の特徴量ではない点注意
-        def fit(self, X, Y):
-            self.calibrater.fit(X, Y)
-
-        # ここで入力するXはpredict_proba である
-        # 実際の特徴量ではない点注意
-        def predict_proba_mock(self, X):
-            return self.calibrater.predict_proba(X)
-
-        # ここで入力するXは実際の特徴量である
-        def predict_proba(self, X):
-            return self.calibrater.predict_proba(self.model.predict_proba(X))
-            
-        # ここで入力するXは実際の特徴量である
-        def predict(self, X):
-            return self.calibrater.predict(self.model.predict_proba(X))
-
-
-    def calibration(self, df: pd.DataFrame=None):
+    def calibration(self):
         """
         予測確率のキャリブレーション
         予測モデルは作成済みで別データでfittingする場合
@@ -862,42 +454,21 @@ class MyModel:
             self.logger.raise_error("model is not fitted.")
         if self.is_classification_model() == False:
             self.logger.raise_error("model type is not classification")
-
-        pred_prob_bef, pred_prob_aft = None, None
-        if df is not None:
-            # 正攻法のアルゴリズム
-            ## キャリブレーション用モデルのインスタンス
-            self.calibrater = CalibratedClassifierCV(self.model, cv="prefit", method='isotonic')
-            self.logger.info("\n%s", self.calibrater)
-            ## fittingを行う
-            X = df[self.colname_explain].astype(np.float32).copy().values
-            Y = df[self.colname_answer ].astype(np.float32).copy().values
-            self.calibrater.fit(X, Y)
-
-            pred_prob_bef = self.model.predict_proba(X)
-            pred_prob_aft = self.calibrater.predict_proba(X)
-        else:
-            # 少し偏屈なアルゴリズム
-            ## 擬似機械学習モデルのインスタンス
-            self.calibrater = self.MyCalibrater(self.model)
-            self.logger.info("\n%s", self.calibrater)
-            ## fittingを行う
-            dfwk = self.df_pred_valid.copy()
-            if dfwk.shape[0] == 0:
-                ## クロスバリデーションを行っていない場合はエラー
-                self.logger.raise_error("cross validation is not done !!")
-
-            X = dfwk.loc[:, dfwk.columns.str.contains("^predict_proba_")].values
-            Y = dfwk["answer"].values
-            self.calibrater.fit(X, Y)
-            self.is_calibration = True # このフラグでON/OFFする
-
-            # ここでのXは確率なので、mockを使って補正後の値を確認する
-            pred_prob_bef = X
-            pred_prob_aft = self.calibrater.predict_proba_mock(X)
-
+        self.calibrater = Calibrater(self.model)
+        self.logger.info("\n%s", self.calibrater)
+        ## fittingを行う
+        df = self.df_pred_valid.copy()
+        if df.shape[0] == 0:
+            ## クロスバリデーションを行っていない場合はエラー
+            self.logger.raise_error("cross validation is not done !!")
+        X = df.loc[:, df.columns.str.contains("^predict_proba_")].values
+        Y = df["answer"].values
+        self.calibrater.fit(X, Y)
         self.is_calibration = True # このフラグでON/OFFする
-
+        # ここでのXは確率なので、mockを使って補正後の値を確認する
+        pred_prob_bef = X
+        pred_prob_aft = self.calibrater.predict_proba_mock(X)
+        self.is_calibration = True # このフラグでON/OFFする
         # Calibration Curve Plot
         classes = np.sort(np.unique(Y).astype(int))
         self.fig["calibration_curve"] = plt.figure(figsize=(12, 8))
@@ -949,7 +520,7 @@ class MyModel:
         # 前処理の結果を反映する
         X = None
         if _X is None:
-            X, _ = self.ndf_apply_preproc(df, x_proc=True, y_proc=False)
+            X, _ = self.preproc(df, x_proc=True, y_proc=False)
             if len(X) == 1: X = X[0] #_addがなければ元に戻す
         else:
             # numpy変換処理での遅延を避けるため、引数でも指定できるようにする
@@ -967,7 +538,7 @@ class MyModel:
         try:
             Y = None
             if _Y is None:
-                _, Y = self.ndf_apply_preproc(df, x_proc=False, y_proc=True)
+                _, Y = self.preproc(df, x_proc=False, y_proc=True)
                 if len(Y) == 1: Y = Y[0] #_addがなければ元に戻す
             else:
                 # numpy変換処理での遅延を避けるため、引数でも指定できるようにする
@@ -979,22 +550,6 @@ class MyModel:
             # いずれは削除する
             self.logger.warning("Preprocessing answer's label is not work.")
 
-        self.logger.info("END")
-        return df_score
-
-
-    # 偏差値に変換して予測する
-    def predict_deviation_value(self, df=None, _X=None, _Y=None, pred_params={"do_estimators":False}):
-        self.logger.info("START")
-        # 通常の予測関数で予測結果を得る
-        df_score = self.predict(df=df, _X=_X, _Y=_Y, pred_params=pred_params)
-
-        # 交差検証を前提とする(また、予測結果がガウス分布になっている事を仮定する)
-        if self.df_pred_valid.shape[0] > 0:
-            dfwk = self.df_pred_valid
-            df_score["predict"] = 10*(df_score["predict"] - dfwk["predict"].mean())/dfwk["predict"].std() + 50
-        else:
-            self.logger.raise_error("predict_cross_validation is not exist.")
         self.logger.info("END")
         return df_score
 
@@ -1069,7 +624,7 @@ class MyModel:
                 self.logger.raise_error("this model do not predict probability.")
 
         # 個別に追加定義したtargetがあれば作成する
-        X, Y = self.ndf_apply_preproc(df)
+        X, Y = self.preproc(df)
 
         # まずは、正常な状態での評価値を求める
         ## 時間短縮のためcalc_sizeを設け、1未満のサイズではその割合のデータだけ
@@ -1167,7 +722,7 @@ class MyModel:
         self.logger.info("START")
 
         # numpyに変換
-        X, Y = self.ndf_apply_preproc(df)
+        X, Y = self.preproc(df)
         ## 各データが１種類の場合は、元に戻す
         if len(X) == 1: X = X[0]
         if len(Y) == 1: Y = Y[0]
@@ -1219,9 +774,6 @@ class MyModel:
         self.logger.info("START")
         dir_path = correct_dirpath(dir_path)
         makedirs(dir_path, exist_ok=exist_ok, remake=remake)
-        # 全データの保存
-        if mode in [0,1]:
-            save_pickle(self, dir_path + self.name + ".pickle")
         if mode in [0,2]:
             # モデルを保存
             if is_callable(self.model, "dump") == True:
@@ -1231,7 +783,7 @@ class MyModel:
                 save_pickle(self.model, dir_path + self.name + ".model.pickle")
             # モデル情報をテキストで保存
             with open(dir_path + self.name + ".metadata", mode='w') as f:
-                f.write("colname_explain_first="+str(self.colname_explain_first.tolist())+"\n")
+                f.write("colname_explain_first="+str(self.colname_explain.tolist() if len(self.colname_explain_hist) == 0 else self.colname_explain_hist[0])+"\n")
                 f.write("colname_explain="      +str(self.colname_explain.tolist())+"\n")
                 f.write("colname_answer='"      +self.colname_answer+"'\n")
                 f.write("n_trained_samples="    +str(self.n_trained_samples)+"\n")
@@ -1255,42 +807,11 @@ class MyModel:
             self.df_cm_train.to_csv(dir_path + self.name + ".eval_train_confusion_matrix.csv", encoding="shift-jis")
             self.df_cm_valid.to_csv(dir_path + self.name + ".eval_valid_confusion_matrix.csv", encoding="shift-jis")
             self.df_cm_test.to_csv( dir_path + self.name + ".eval_test_confusion_matrix.csv", encoding="shift-jis")
-        self.logger.info("END")
-
-
-    def load_colname_explain(self, filepath: str, mode: int=0):
-        """
-        特徴量リストを外部ファイルから読み込む
-        Params::
-            mode:
-            0 : colname_explain をそのままコピー
-            1 : df_feature_importances があれば重要度0は省く
-            2 : 追加の特徴量がある事を考慮して, 読み込む対象のmymodelのcolname_explain_firstと比較して追加する
-            3 : 読み込む対象のcolname_explainにあって、現モデルのcolname_explainにないカラムは省く
-        """
-        self.logger.info("START")
-        self.logger.info(f"load other My model: {filepath}")
-        mymodel = load_my_model(filepath)
-        if   mode == 0:
-            self.colname_explain = mymodel.colname_explain.copy()
-        elif mode == 1:
-            self.colname_explain = mymodel.colname_explain.copy()
-            df = mymodel.df_feature_importances.copy()
-            if df.shape[0] > 0:
-                # 除外リストを作成し、除外対象以外の特徴量を残す
-                colname_list = df[(df["importance"].isna()) | (df["importance"] == 0)]["feature_name"].values
-                self.colname_explain = self.colname_explain[~np.isin(self.colname_explain, colname_list)]
-        elif mode == 2:
-            now_features  = self.colname_explain.copy()
-            base_features = mymodel.colname_explain_first.copy()
-            # 今のモデルの特徴量にあって、基本モデルの初期特徴量にないものを抽出
-            add_features  = now_features[~np.isin(now_features, base_features)]
-            self.colname_explain = np.append(mymodel.colname_explain.copy(), add_features.copy())
-        elif mode == 3:
-            now_features  = self.colname_explain_first.copy()
-            base_features = mymodel.colname_explain.copy()
-            self.colname_explain = base_features[np.isin(base_features, now_features)].copy()
-
+        # 全データの保存
+        if mode in [0,1]:
+            ## 不要なデータを削除する
+            self.fig = {}
+            save_pickle(self, dir_path + self.name + ".pickle")
         self.logger.info("END")
 
 
