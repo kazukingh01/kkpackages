@@ -13,7 +13,7 @@ logger = set_logger(__name__)
 
 
 class ProcRegistry(object):
-    def __inti__(self, colname_explain: np.ndarray, colname_answer: np.ndarray):
+    def __init__(self, colname_explain: np.ndarray, colname_answer: np.ndarray):
         super().__init__()
         self.processing = {}
         self.default_proc(colname_explain, colname_answer)
@@ -38,10 +38,10 @@ class ProcRegistry(object):
         logger.info("END")
 
 
-    def __call__(self, df: pd.DataFrame, autofix: bool=False, x_proc: bool=True, y_proc: bool=True):
+    def __call__(self, df: pd.DataFrame, autofix: bool=False, x_proc: bool=True, y_proc: bool=True, row_proc: bool=True):
         logger.info("START")
         # row proc
-        df = self.proc_row(df)
+        if row_proc: df = self.proc_row(df)
         # col proc
         list_x, list_y = [], []
         for name in self.processing.keys():
@@ -51,31 +51,38 @@ class ProcRegistry(object):
             logger.info(f'name: {name}, type: {self.processing[name]["type"]}')
             ndf = df[self.processing[name]["cols"]].values.copy()
             for _proc in self.processing[name]["proc"]:
+                shape_before = ndf.shape
                 logger.info(f"before shape: {ndf.shape}")
                 ndf = _proc(ndf)
                 logger.info(f"after  shape: {ndf.shape}")
+                if shape_before[0] != ndf.shape[0]:
+                    logger.raise_error("The number of rows is different from before and after process.")
             if   self.processing[name]["type"] == "x": list_x.append(ndf)
             elif self.processing[name]["type"] == "y": list_y.append(ndf)
         if autofix:
             if len(list_x) == 1: list_x = list_x[0]
             if len(list_y) == 1: list_y = list_y[0]
+        logger.info(f"after processing x: \n{list_x}")
+        logger.info(f"after processing y: \n{list_y}")
         logger.info("END")
         return list_x, list_y
     
 
-    def proc_row(self, df: pd.DataFrame) -> pd.SparseDataFrame:
+    def proc_row(self, df: pd.DataFrame) -> pd.DataFrame:
         logger.info("START")
         df = df.copy()
         for name in self.processing.keys():
             if self.processing[name]["type"] not in ["row"]: continue
             logger.info(f'name: {name}, type: {self.processing[name]["type"]}')
             for _proc in self.processing[name]["proc"]:
+                logger.info(f"before shape: {df.shape}")
                 df = _proc(df)
+                logger.info(f"after  shape: {df.shape}")
         logger.info("END")
         return df
 
 
-    def register(self, list_proc: list, name: str, type_proc: str=None, columns: np.ndarray=None):
+    def register(self, list_proc: list, name: str=None, type_proc: str=None, columns: np.ndarray=None):
         """
         処理を登録する. 登録名が新規の場合は新たにprocessingを登録する
         Params::
@@ -84,6 +91,9 @@ class ProcRegistry(object):
             type_proc: "x" or "y". rowの場合、default_rowに追加するのみとする
         """
         logger.info("START")
+        if name is None and isinstance(type_proc, str) and type_proc == "x":   name = "default_x"
+        if name is None and isinstance(type_proc, str) and type_proc == "y":   name = "default_y"
+        if name is None and isinstance(type_proc, str) and type_proc == "row": name = "default_row"
         if name not in list(self.processing.keys()):
             if type_proc not in ["x", "y"]:
                 logger.raise_error(f'type_proc must be "x" or "y". type_proc: {type_proc}')
@@ -96,6 +106,19 @@ class ProcRegistry(object):
         logger.info("END")
     
 
+    def set_columns(self, columns: np.ndarray, name: str=None, type_proc: str=None):
+        """
+        説明変数を再度セットする
+        Params::
+            columns: 新規の説明変数
+            name: None の場合, type_proc が指定されていれば、defaultに自動セットする
+            type_proc: x or y
+        """
+        if name is None and isinstance(type_proc, str) and type_proc == "x": name = "default_x"
+        if name is None and isinstance(type_proc, str) and type_proc == "y": name = "default_y"
+        self.processing[name]["cols"] = columns
+    
+
     def fit(self, df: pd.DataFrame):
         """
         登録した処理に関するパラメータを学習するため、入力データを基準にfittingさせる
@@ -103,6 +126,7 @@ class ProcRegistry(object):
         logger.info("START")
         df = self.proc_row(df) # row proc
         for name in self.processing.keys():
+            if self.processing[name]["type"] not in ["x", "y"]: continue
             logger.info(f'name: {name}, type: {self.processing[name]["type"]}')
             ndf = df[self.processing[name]["cols"]].values.copy()
             for _proc in self.processing[name]["proc"]:
@@ -184,6 +208,29 @@ class MyOneHotEncoder:
         return ndf
     def fit(self, ndf: np.ndarray):
         self.model.fit(ndf)
+
+class MyAsType:
+    """ Classを定義しないとpickle化できない """
+    def __init__(self, convert_type: object):
+        self.convert_type = convert_type
+    def __call__(self, ndf: np.ndarray):
+        ndf = ndf.copy().astype(self.convert_type)
+        return ndf
+
+class MyReshape:
+    """ Classを定義しないとpickle化できない """
+    def __init__(self, convert_shape: tuple):
+        self.convert_shape = convert_shape if type(convert_shape) in [list, tuple] else (convert_shape, )
+    def __call__(self, ndf: np.ndarray):
+        ndf = ndf.copy().reshape(*self.convert_shape)
+        return ndf
+
+class MyDropNa:
+    def __init__(self, colname: str):
+        self.colname = colname
+    def __call__(self, df: pd.DataFrame):
+        return df.loc[~df[self.colname].isna(), :]
+
 
 
 class Calibrater:

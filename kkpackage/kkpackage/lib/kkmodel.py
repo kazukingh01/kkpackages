@@ -4,14 +4,13 @@ import pandas as pd
 from scipy import stats
 import optuna
 
-from sklearn.preprocessing import MinMaxScaler, StandardScaler, OneHotEncoder
 from sklearn.decomposition import PCA
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 from sklearn.metrics import roc_curve, auc
 import matplotlib.pyplot as plt
 
 # local package
-from kkpackage.lib.learning import ProcRegistry, Calibrater
+from kkpackage.lib.learning import ProcRegistry, Calibrater, MyReplaceValue, MyAsType, MyReshape, MyDropNa
 from kkpackage.util.learning import search_features_by_variance, search_features_by_correlation, \
     split_data_balance, predict_detail, evalate, eval_classification_model, eval_regressor_model, \
     is_classification_model, conv_validdata_in_fitparmas, calc_randomtree_importance
@@ -50,9 +49,10 @@ class MyModel:
         self.df_feature_importances_modeling    = pd.DataFrame()
         self.model          = model
         self.is_model_fit   = False
+        self.optuna         = None
         self.calibrater     = None
         self.is_calibration = False
-        self.preproc        = ProcRegistry(self.colname_explain, np.ndarray([self.colname_answer]))
+        self.preproc        = ProcRegistry(self.colname_explain, np.array([self.colname_answer]))
         self.n_trained_samples = {}
         self.n_tested_samples  = {}
         self.index_train = np.array([]) # 実際に残す際はマルチインデックスかもしれないので、numpy形式にはならない
@@ -67,7 +67,6 @@ class MyModel:
         self.se_eval_train = pd.Series(dtype=object)
         self.se_eval_valid = pd.Series(dtype=object)
         self.se_eval_test  = pd.Series(dtype=object)
-        self.optuna_study   = None
         self.fig = {}
         self.logger.info("create instance. name:"+name)
         # model が set されていれば初期化しておく
@@ -91,7 +90,7 @@ class MyModel:
         """
         self.logger.debug("START")
         self.model          = model
-        self.optuna_study   = None
+        self.optuna         = None
         self.calibrater     = None
         self.is_calibration = False
         self.is_model_fit   = False
@@ -117,6 +116,7 @@ class MyModel:
         else:
             cut_features         = self.colname_explain[~np.isin(self.colname_explain, alive_features)]
             self.colname_explain = self.colname_explain[ np.isin(self.colname_explain, alive_features)]
+        self.preproc.set_columns(self.colname_explain, type_proc="x")
         self.logger.info(f"cut   features by variance :{cut_features.shape[0]        }. features...{cut_features}")
         self.logger.info(f"alive features by variance :{self.colname_explain.shape[0]}. features...{self.colname_explain}")
         self.logger.info("END")
@@ -198,6 +198,28 @@ class MyModel:
         cut_list       = self.df_feature_importances_randomtrees.iloc[ -1*_n:]["feature_name"].values.copy()
         self.logger.info("END")
         return alive_features, cut_list
+
+
+    def set_default_proc(self, df: pd.DataFrame):
+        self.preproc.register(
+            [
+                MyAsType(np.float32),
+                MyReplaceValue(float( "inf"), float("nan")), 
+                MyReplaceValue(float("-inf"), float("nan"))
+            ], type_proc="x"
+        )
+        self.preproc.register(
+            [
+                (MyAsType(np.int32) if self.is_classification_model() else MyAsType(np.float32)),
+                MyReshape(-1),
+            ], type_proc="y"
+        )
+        self.preproc.register(
+            [
+                MyDropNa(self.colname_answer)
+            ], type_proc="row"
+        )
+        self.preproc.fit(df)
 
 
     def eval_model(self, df_score, **eval_params) -> (pd.DataFrame, pd.Series, ):
@@ -443,7 +465,6 @@ class MyModel:
         self.logger.info("END")
 
 
-
     def calibration(self):
         """
         予測確率のキャリブレーション
@@ -520,7 +541,7 @@ class MyModel:
         # 前処理の結果を反映する
         X = None
         if _X is None:
-            X, _ = self.preproc(df, x_proc=True, y_proc=False)
+            X, _ = self.preproc(df, x_proc=True, y_proc=False, row_proc=False)
             if len(X) == 1: X = X[0] #_addがなければ元に戻す
         else:
             # numpy変換処理での遅延を避けるため、引数でも指定できるようにする
@@ -534,11 +555,12 @@ class MyModel:
 
         if df is not None:
             df_score["index"] = df.index.values.copy()
+            for x in self.colname_other: df_score["other_"+x] = df[x].copy().values
 
         try:
             Y = None
             if _Y is None:
-                _, Y = self.preproc(df, x_proc=False, y_proc=True)
+                _, Y = self.preproc(df, x_proc=False, y_proc=True, row_proc=False)
                 if len(Y) == 1: Y = Y[0] #_addがなければ元に戻す
             else:
                 # numpy変換処理での遅延を避けるため、引数でも指定できるようにする
@@ -728,17 +750,18 @@ class MyModel:
         if len(Y) == 1: Y = Y[0]
         X_test, Y_test = None, None
         if df_test is not None:
-            X_test, Y_test = self.ndf_apply_preproc(df_test)
+            X_test, Y_test = self.preproc(df_test)
             if len(X_test) == 1: X_test = X_test[0]
             if len(Y_test) == 1: Y_test = Y_test[0]
 
         # データの数を変えながら探索する
         self.optuna: optuna.study.Study = optuna.create_study()
-        df_optuna = search_hyperparams_by_optuna(
+        df_optuna, best_params = search_hyperparams_by_optuna(
             self.optuna, self.model, X, Y, n_trials=n_trials, iters=iters, X_test=X_test, Y_test=Y_test, dict_param=dict_param, 
             tuning_eval=tuning_eval, split_params=split_params, fit_params=fit_params, eval_params=eval_params, n_jobs=self.n_jobs
         )
         self.optuna_result = df_optuna.copy()
+        self.optuna_params = best_params
         self.logger.info("END")
 
 
@@ -829,7 +852,7 @@ class MyModel:
         if   mode == 0:
             self.model = mymodel.model.copy()
         elif mode == 1:
-            best_params = mymodel.optuna_study.best_params.copy()
+            best_params = mymodel.optuna.best_params.copy()
             ## 現行モデルに上書き
             self.model = self.model.set_params(**best_params)
         self.logger.info(f"\n{self.model}", )

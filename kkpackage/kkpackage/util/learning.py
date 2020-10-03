@@ -91,7 +91,7 @@ def search_features_by_variance(df: pd.DataFrame, cutoff: float=0.99, ignore_nan
                 break
             sewk_i_min = df_con.iloc[i]
             sewk_i_max = df_con.iloc[i+n_data]
-            boolwk = boolwk | (sewk_i_min == sewk_i_max)
+            boolwk = boolwk | (sewk_i_min == sewk_i_max).values | (sewk_i_min.isna() & sewk_i_max.isna()).values # nan == nan が Falseになる事を考慮する
 
     logger.info("END")
     return columns_org[boolwk].values
@@ -448,12 +448,12 @@ def split_data_balance(Y: np.ndarray, n_splits: int=1, y_type: str="cls", weight
     if y_type == "cls":
         # 分類の場合
         Y = Y.astype(int).copy()
-        labels    = np.sort(np.unique(Y))
+        labels = np.sort(np.unique(Y))
         if type(weight) == dict:
             if [int(x) for x in sorted(list(weight.keys()))] != [int(x) for x in labels]:
                 logger.raise_error(f"labels: {labels}, weight: {weight} is not enough keys.")
-        indexes   = {int(x):np.where(Y == x)[0] for x in labels} # label 毎のindexをdictで保持. 念の為intに変換. int64とかと区別するため
-        indexes   = {x: np.random.permutation(indexes.get(x)) for x in indexes.keys()} # 規則性を持ってインデックスが並んでいる可能性もあるため、ランダムに並べ替えておく
+        indexes = {int(x):np.where(Y == x)[0] for x in labels} # label 毎のindexをdictで保持. 念の為intに変換. int64とかと区別するため
+        indexes = {x: np.random.permutation(indexes.get(x)) for x in indexes.keys()} # 規則性を持ってインデックスが並んでいる可能性もあるため、ランダムに並べ替えておく
     elif y_type == "reg":
         # 回帰の場合
         ## sort してある範囲毎で分割する

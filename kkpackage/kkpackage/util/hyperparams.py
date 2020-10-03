@@ -95,7 +95,7 @@ def search_hyperparams_by_optuna(
     n_trials: int=100, iters: int=None, X_test: np.ndarray=None, Y_test: np.ndarray=None, dict_param="auto", tuning_eval: str="rmse", 
     split_params: dict={"n_splits":1,"y_type":"cls","weight":"balance","is_bootstrap":False}, 
     fit_params: dict={}, eval_params: dict={}, n_jobs: int=1
-) -> (optuna.Study, pd.DataFrame, ):
+) -> (pd.DataFrame, dict, ):
     """
     optuna でパラメータ探索
     Params::
@@ -237,12 +237,17 @@ def search_hyperparams_by_optuna(
     )
     # ハイパーパラメータ探索
     optuna_study.optimize(f, n_trials=n_trials)
-
     # 結果を格納する
     for i_trial in optuna_study.trials:
         sewk = pd.Series(i_trial.params)
         sewk["value"]  = i_trial.value
         df_optuna = df_optuna.append(sewk, ignore_index=True)
+    # パラメータを作成する
+    dict_param_ret = {}
+    for key, val in  dict_param.items():
+        if val[0] == "const": dict_param_ret[key] = val[-1]
+    for key, val in  optuna_study.best_params.items():
+        dict_param_ret[key] = val
 
     logger.info("END")
-    return df_optuna
+    return df_optuna, dict_param_ret

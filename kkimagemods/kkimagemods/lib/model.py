@@ -192,7 +192,6 @@ class MyClassifier:
         self.preprocess_img = transforms.Compose([
             MyResize(224),
             transforms.CenterCrop(224),
-            #transforms.Resize(224),
         ])
         self.preprocess = transforms.Compose([
             transforms.ToTensor(),
