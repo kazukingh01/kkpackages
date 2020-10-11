@@ -123,7 +123,6 @@ class MyDataset(torch.utils.data.Dataset):
     def __init__(
         self, root_dirpath: str, json_label: str,
         transforms: List[object]=None, 
-        regex_list: List[str]=[r"\.jpg", r"\.png", r"\.JPG"]
     ):
         super().__init__()
         """
@@ -146,7 +145,7 @@ class MyDataset(torch.utils.data.Dataset):
 
     def __len__(self):
         return self.len
-    
+
 
     def __getitem__(self, index):
         name   = self.image_names[index]
@@ -420,6 +419,242 @@ class MyClassifier:
 
 
 
+class BaseNN:
+    def __init__(
+        self,
+        # network
+        mynn: nn.Module, 
+        # train dataset
+        dataset_train: torch.utils.data.Dataset,
+        # train dataloader
+        num_workers: int=1, batch_size: int=2, 
+        # validation dataset
+        dataset_valids: List[torch.utils.data.Dataset]=[],
+        # validation dataloader
+        valid_step: int=None, batch_size_valid: int=2, 
+        # optimizer
+        lr: float=0.001, epoch: int=100, 
+        # output
+        outdir: str="./output_"+datetime.datetime.now().strftime("%Y%m%d%H%M%S"), save_step: int=50
+    ):
+        # NN
+        self.mynn = mynn
+        # optimizer
+        self.optimizer = optim.RAdam(self.mynn.parameters(), lr=lr, weight_decay=0)
+        # DataLoader
+        self.dataloader_train = torch.utils.data.DataLoader(
+            dataset_train, batch_size=batch_size, shuffle=True, num_workers=num_workers, 
+            drop_last=True, collate_fn=self.collate_fn
+        )
+        self.dataloader_valids = []
+        for dataset_valid in dataset_valids:
+            self.dataloader_valids.append(
+                torch.utils.data.DataLoader(
+                    dataset_valid, batch_size=batch_size_valid, shuffle=True, num_workers=num_workers, 
+                    drop_last=True, collate_fn=partial(self.collate_fn, is_train=False)
+                )
+            )
+        # Process
+        self.process_data_train_pre = []
+        self.process_data_train_aft = []
+        self.process_data_valid_pre = []
+        self.process_data_valid_aft = []
+        self.process_label          = []
+        # Loss
+        self.loss_funcs = []
+        # validation
+        self.valid_step = valid_step
+        # Config
+        self.is_cuda  = False
+        self.epoch    = epoch
+        # Other
+        self.iter     = 0
+        self.min_loss = float("inf")
+        self.best_params = {}
+        self.outdir = correct_dirpath(outdir)
+        makedirs(self.outdir, exist_ok=True, remake=True)
+        self.save_step = save_step
+        # TensorBoard
+        self.writer = SummaryWriter(log_dir=self.outdir + "logs")
+
+    def to_cuda(self):
+        """ GPUの使用をONにする """
+        self.mynn.to(torch.device("cuda:0")) # moduleがcudaにのっているかどうかは、next(model.parameters()).is_cuda で確認できる
+        self.is_cuda = True
+
+    def val_to(self, x):
+        """ GPUの使用がONであればGPUに乗せる """
+        return x.to(torch.device("cuda:0")) if self.is_cuda else x
+
+    @classmethod
+    def collate_fn(cls, batch, is_train: bool=True) -> (List[object], List[object], ):
+        """
+        以下のように実装する
+        Usage::
+            images, labels = [], []
+            for image, label in batch:
+                images.append(image)
+                labels.append(label)
+            return images, labels
+        """
+        raise NotImplementedError()
+
+    def save(self, filename: str=None, is_best: bool=False):
+        if is_best:
+            if len(self.best_params) > 0:
+                torch.save(self.best_params["params"], self.outdir + filename + f'.{self.best_params["iter"]}' \
+                if filename is not None else self.outdir + f'model_best_{self.best_params["iter"]}.pth')
+            else:
+                logger.raise_error("self.best_params is nothing.")
+        else:
+            torch.save(self.mynn.state_dict(), self.outdir + filename + f".{self.iter}" if filename is not None else self.outdir + f"model_{self.iter}.pth")
+    
+    def load(self, model_path: str):
+        self.mynn.load_state_dict(torch.load(model_path))
+        self.mynn.eval()
+    
+    def predict(self, _input):
+        self.mynn.eval()
+        with torch.no_grad():
+            # pre proc
+            for _proc in self.process_data_train_pre:
+                _input = _proc(_input)
+            output = self.val_to(_input)
+            output = self.mynn(output)
+            # after proc
+            for _proc in self.process_data_train_aft:
+                output = _proc(output)
+        return output
+    
+    def train(self):
+        self.mynn.train() # train() と eval() は Dropout があるときに区別する必要がある
+        for _ in range(self.epoch):
+            for _input, label in self.dataloader_train:
+                self.iter += 1
+                self.mynn.zero_grad() # 勾配を初期化
+                # pre proc
+                for _proc in self.process_data_train_pre: _input = _proc(_input)
+                for _proc in self.process_label:          label  = _proc(label)
+                label  = self.val_to(label)
+                output = self.val_to(_input)
+                output = self.mynn(output)
+                # after proc
+                for _proc in self.process_data_train_aft: output = _proc(output)
+                print((output > 0.5).sum())
+                # loss calculation
+                loss, losses = 0, []
+                for loss_func in self.loss_funcs:
+                    losses.append(loss_func(output, label))
+                    loss += losses[-1]
+                loss.backward()
+                self.optimizer.step()
+                loss   = float(loss.to("cpu").detach().item())
+                losses = [float(_x.to("cpu").detach().item()) for _x in losses]
+                logger.info(f'iter: {self.iter}, train: {loss}, loss: {losses}')
+                # tensor board
+                self.writer.add_scalar("train/total_loss", loss, self.iter)
+                for i_loss, _loss in enumerate(losses): self.writer.add_scalar(f"train/loss_{i_loss}", _loss, self.iter)
+                # save
+                if self.iter % self.save_step == 0:
+                    self.save()
+                # validation
+                if len(self.dataloader_valids) > 0 and self.valid_step is not None and self.iter % self.valid_step == 0:
+                    self.mynn.eval()
+                    with torch.no_grad():
+                        for i_valid, dataloader_valid in enumerate(self.dataloader_valids):
+                            _input, label = next(iter(dataloader_valid))
+                            # pre proc
+                            for _proc in self.process_data_valid_pre: _input = _proc(_input)
+                            for _proc in self.process_label:          label  = _proc(label)
+                            label  = self.val_to(label)
+                            output = self.val_to(_input)
+                            output = self.mynn(output)
+                            # after proc
+                            for _proc in self.process_data_valid_aft: output = _proc(output)
+                            # loss calculation
+                            loss_valid, losses_valid = 0, []
+                            for loss_func in self.loss_funcs:
+                                losses_valid.append(loss_func(output, label))
+                                loss_valid += losses_valid[-1]
+                            loss_valid   = float(loss_valid.to("cpu").detach().item())
+                            losses_valid = [float(_x.to("cpu").detach().item()) for _x in losses_valid]
+                            logger.info(f'iter: {self.iter}, valid: {loss_valid}, loss: {losses_valid}')
+                            # tensor board
+                            self.writer.add_scalar(f"validation{i_valid}/total_loss", loss_valid, self.iter)
+                            for i_loss, _loss in enumerate(losses_valid): self.writer.add_scalar(f"validation{i_valid}/loss_{i_loss}", _loss, self.iter)
+                            if i_valid == 0 and self.min_loss > loss:
+                                self.min_loss = loss
+                                self.best_params = {
+                                    "iter": self.iter,
+                                    "loss_train": loss,
+                                    "loss_valid": loss_valid,
+                                    "params": self.mynn.state_dict().copy()
+                                }
+                    self.mynn.train()
+        self.writer.close()
+        self.save(is_best=True)
+
+
+
+class MyAutoEncoder(BaseNN):
+    def __init__(
+        self,
+        # network
+        mynn: nn.Module, 
+        # train dataset
+        dataset_train: torch.utils.data.Dataset,
+        # train dataloader
+        num_workers: int=1, batch_size: int=2, 
+        # validation dataset
+        dataset_valids: List[torch.utils.data.Dataset]=[],
+        # validation dataloader
+        valid_step: int=None, batch_size_valid: int=2, 
+        # optimizer
+        lr: float=0.001, epoch: int=100, 
+        # output
+        outdir: str="./output_"+datetime.datetime.now().strftime("%Y%m%d%H%M%S"), save_step: int=50
+    ):
+        super().__init__(
+            mynn, dataset_train,
+            num_workers=num_workers, batch_size=batch_size,
+            dataset_valids=dataset_valids,
+            valid_step=valid_step, batch_size_valid=batch_size_valid, 
+            lr=lr, epoch=epoch, outdir=outdir, save_step=save_step
+        )
+        self.process_data_train_aft = [
+            lambda x: x.reshape(-1),
+        ]
+        self.process_data_valid_aft = [
+            lambda x: x.reshape(-1),
+        ]
+        self.process_label = [
+            lambda x: x.to(torch.float32),
+            lambda x: x.reshape(-1),
+        ]
+        self.loss_funcs = [
+            nn.BCELoss()
+        ]
+
+    @classmethod
+    def collate_fn(cls, batch, is_train: bool=False):
+        data = []
+        for _data, _ in batch:
+            data.append(_data)
+        data = torch.cat([x.unsqueeze(0) for x in data], axis=0)
+        return data, data
+
+    def predict(self, _input, all_layer: bool=True):
+        self.mynn.eval()
+        with torch.no_grad():
+            # pre proc
+            for _proc in self.process_data_train_pre:
+                _input = _proc(_input)
+            output = self.val_to(_input)
+            if all_layer:
+                output = self.mynn(output)
+            else:
+                output = self.mynn.encoder(output)
+        return output
 
 """
 Augmentations
@@ -460,3 +695,47 @@ class MyRandAugment(RandAugment):
                 # ために真っ黒な画像になるため、３色以下の場合は操作をやり直す
                 break
         return img_cp
+
+
+
+"""
+Transformation
+"""
+class MyCenterCrop:
+    def __init__(self, size: Tuple[int], padding: object=False):
+        self.size = size
+        self.padding = padding
+    def __call__(self, tens: torch.Tensor)-> torch.Tensor:
+        tens_new = torch.zeros(*self.size, dtype=tens.dtype)
+        tens_new[:] = self.padding # padding の値で変換
+        center_tens_b = [x // 2 for x in tens.shape]
+        center_tens_a = [x // 2 for x in tens_new.shape]
+        center_width  = [y if x > y else x for x, y in zip(center_tens_b, center_tens_a)]
+        if   len(self.size) == 3:
+            tens_new[
+                center_tens_a[0] - center_width[0]:center_tens_a[0] + center_width[0],
+                center_tens_a[1] - center_width[1]:center_tens_a[1] + center_width[1],
+                center_tens_a[2] - center_width[2]:center_tens_a[2] + center_width[2],
+            ] = tens[
+                center_tens_b[0] - center_width[0]:center_tens_b[0] + center_width[0],
+                center_tens_b[1] - center_width[1]:center_tens_b[1] + center_width[1],
+                center_tens_b[2] - center_width[2]:center_tens_b[2] + center_width[2],
+            ]
+        elif len(self.size) == 2:
+            tens_new[
+                center_tens_a[0] - center_width[0]:center_tens_a[0] + center_width[0],
+                center_tens_a[1] - center_width[1]:center_tens_a[1] + center_width[1],
+            ] = tens[
+                center_tens_b[0] - center_width[0]:center_tens_b[0] + center_width[0],
+                center_tens_b[1] - center_width[1]:center_tens_b[1] + center_width[1],
+            ]
+        elif len(self.size) == 1:
+            tens_new[
+                center_tens_a[0] - center_width[0]:center_tens_a[0] + center_width[0],
+            ] = tens[
+                center_tens_b[0] - center_width[0]:center_tens_b[0] + center_width[0],
+            ]
+        else:
+            raise Exception()
+        return tens_new
+        
