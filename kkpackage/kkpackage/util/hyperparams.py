@@ -127,26 +127,26 @@ def search_hyperparams_by_optuna(
                 
         if   str(type(model)).find("lightgbm.sklearn.LGBMClassifier") >= 0:
             dict_param = {
-                "boosting_type"    :["category","gbdt","dart","goss"], 
+                "boosting_type"    :["category","gbdt","dart"], #"goss"
                 "num_leaves"       :["int",10,1500],
                 "max_depth"        :["const",-1],
-                "learning_rate"    :["const",0.3], 
+                "learning_rate"    :["const",0.5], 
                 "n_estimators"     :["const", 5000], 
                 "subsample_for_bin":["const", 200000], 
                 ## 必要に応じて変更する ‘binary’ or ‘multiclass'
                 "objective"        :["const",("binary" if bool_class_binary==True else "multiclass")], 
                 "class_weight"     :["const", "balanced"], 
-                "min_child_weight" :["float",0,1000], 
+                "min_child_weight" :["category"] + [0.01 * (2**i) for i in range(18)], 
                 "min_child_samples":["int",1,1000], 
-                "subsample"        :["float", 0.001, 1.0], 
-                "colsample_bytree" :["float", 0.001, 1.0], 
-                "reg_lambda"       :["float",0,1000], 
+                "subsample"        :["step", 0.01, 0.99, 0.01], 
+                "colsample_bytree" :["step", 0.01, 0.99, 0.01], 
+                "reg_alpha"        :["const", 0],
+                "reg_lambda"       :["category", 0] + [0.01 * (2**i) for i in range(18)],
                 "random_state"     :["const",1], 
                 "n_jobs"           :["const", n_jobs] 
             }
         elif str(type(model)).find("LGBMRegressor") >= 0:
             dict_param = {
-                #"boosting_type"    :["category","gbdt","dart","goss","rf"], 
                 "boosting_type"    :["const","gbdt"], 
                 "num_leaves"       :["int",10,1000],
                 "max_depth"        :["const",-1], 
@@ -157,26 +157,29 @@ def search_hyperparams_by_optuna(
                 "class_weight"     :["const", None], 
                 "min_child_weight" :["float",0,100], 
                 "min_child_samples":["int",1,100], 
-                "subsample"        :["category", 0.01, 0.02, 0.04, 0.1, 0.2, 0.4], 
-                "colsample_bytree" :["category", 0.01, 0.02, 0.04, 0.1, 0.2, 0.4], 
+                "subsample"        :["step", 0.01, 0.99, 0.01], 
+                "colsample_bytree" :["step", 0.01, 0.99, 0.01], 
                 "reg_lambda"       :["float",0,100], 
                 "random_state"     :["const",1], 
                 "n_jobs"           :["const", n_jobs] 
             }
         elif str(type(model)).find("xgboost.sklearn.XGBClassifier") >= 0:
             dict_param = {
-                "max_depth"        :["int", 3, 10], 
-                "learning_rate"    :["category",0.05,0.1,0.2,0.3,0.5], 
-                "n_estimators"     :["int",100,3000], 
-                "booster"          :["category","gbtree","gblinear","dart"], 
-                "n_jobs"           :["const", n_jobs], 
-                "gamma"            :["float", 0, 100], 
-                "min_child_weight" :["float",0,10], 
-                "max_delta_step"   :["int", 0, 100], 
-                "subsample"        :["step", 0.1, 0.9, 0.1], 
-                "colsample_bytree" :["step", 0.1, 0.9, 0.1], 
-                ## 必要に応じて変更する reg:linear, multi:softmax, multi:softprob
+                "n_estimators"     :["const", 3000], 
+                "max_depth"        :["int", 3, 15], 
+                "learning_rate"    :["const", 0.1], 
                 "objective"        :["const",("binary:logistic" if bool_class_binary==True else "multi:softmax")], 
+                "booster"          :["category", "gbtree","dart"], 
+                "n_jobs"           :["const", n_jobs], 
+                "gamma"            :["category", 0] + [0.01 * (2**i) for i in range(16)],
+                "min_child_weight" :["category", 0] + [0.01 * (2**i) for i in range(16)],
+                "max_delta_step"   :["const", 0], 
+                "subsample"        :["step", 0.01, 0.99, 0.01], 
+                "colsample_bytree" :["step", 0.01, 0.99, 0.01], 
+                "colsample_bylevel":["const", 1],
+                "colsample_bynode" :["const", 1],
+                "reg_alpha"        :["category", 0] + [0.01 * (2**i) for i in range(16)],
+                "reg_lambda"       :["category", 0] + [0.01 * (2**i) for i in range(16)],
                 "random_state"     :["const",1] 
             }
         elif str(type(model)).find("HistGradientBoostingClassifier") >= 0:
@@ -237,6 +240,7 @@ def search_hyperparams_by_optuna(
     )
     # ハイパーパラメータ探索
     optuna_study.optimize(f, n_trials=n_trials)
+
     # 結果を格納する
     for i_trial in optuna_study.trials:
         sewk = pd.Series(i_trial.params)

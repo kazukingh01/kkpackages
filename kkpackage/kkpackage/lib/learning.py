@@ -49,7 +49,11 @@ class ProcRegistry(object):
             if x_proc == False and self.processing[name]["type"] == "x": continue
             if y_proc == False and self.processing[name]["type"] == "y": continue
             logger.info(f'name: {name}, type: {self.processing[name]["type"]}')
-            ndf = df[self.processing[name]["cols"]].values.copy()
+            if len(self.processing[name]["proc"]) > 0 and isinstance(self.processing[name]["proc"][0], MyAsType):
+                ## 始めの処理がAsTypeの場合はメモリの軽減のためにndf前に適応する
+                ndf = df[self.processing[name]["cols"]].astype(self.processing[name]["proc"][0].convert_type).values.copy()
+            else:
+                ndf = df[self.processing[name]["cols"]].values.copy()
             for _proc in self.processing[name]["proc"]:
                 shape_before = ndf.shape
                 logger.info(f"before shape: {ndf.shape}")
@@ -128,7 +132,11 @@ class ProcRegistry(object):
         for name in self.processing.keys():
             if self.processing[name]["type"] not in ["x", "y"]: continue
             logger.info(f'name: {name}, type: {self.processing[name]["type"]}')
-            ndf = df[self.processing[name]["cols"]].values.copy()
+            if len(self.processing[name]["proc"]) > 0 and isinstance(self.processing[name]["proc"][0], MyAsType):
+                ## 始めの処理がAsTypeの場合はメモリの軽減のためにndf前に適応する
+                ndf = df[self.processing[name]["cols"]].astype(self.processing[name]["proc"][0].convert_type).values.copy()
+            else:
+                ndf = df[self.processing[name]["cols"]].values
             for _proc in self.processing[name]["proc"]:
                 if is_callable(_proc, "fit"):
                     # Fitting

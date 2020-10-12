@@ -98,7 +98,7 @@ def search_features_by_variance(df: pd.DataFrame, cutoff: float=0.99, ignore_nan
 
 
 
-def search_features_by_correlation(df: pd.DataFrame, cutoff: float=0.9, ignore_nan_mode: int=0, on_gpu_size: int=1, n_jobs: int=1) -> (pd.DataFrame, list, ):
+def search_features_by_correlation(df: pd.DataFrame, cutoff: float=0.9, ignore_nan_mode: int=0, on_gpu_size: int=1, min_n_nan: int=10, n_jobs: int=1) -> (pd.DataFrame, list, ):
     """
     相関係数の高い値の特徴量をカットする
     ※欠損無視(ignore_nan=True)しての計算は計算量が多くなるので注意
@@ -110,6 +110,7 @@ def search_features_by_correlation(df: pd.DataFrame, cutoff: float=0.9, ignore_n
             2: pandas で計算する. nan は無視して計算するが遅いので並列化している
             3: GPUを使って高速に計算する. nanは無視して計算する
         on_gpu_size: ignore_nan_mode=3のときに使う. 行列が全てGPUに乗り切らないときに、何分割するかの数字
+        min_n_nan: ignore_nan_mode=3のときに使う. 
         n_jobs: ignore_nan_mode=2 のときの並列数
     """
     logger.info("START")
@@ -243,51 +244,73 @@ def search_features_by_correlation(df: pd.DataFrame, cutoff: float=0.9, ignore_n
         ## ■■■
         for _i in np.arange(ndf_corr.shape[1]):
             ndf_corr[_i:, _i] = np.nan
+        print(1)
         ## cut対象を絞る
         cut_list = df.columns.values[( ((ndf_corr > cutoff) | (ndf_corr < -1*cutoff)).sum(axis=0) > 0 )]
 
     # 相関係数を保存しておく
     df_corr = pd.DataFrame(ndf_corr, columns=df.columns.values, index=df.columns.values).astype(np.float16)
+    logger.info("END")
     return df_corr, cut_list
 
 
-# 自作相関係数計算関数. GPUで高速化したい目的
-def corr_coef(_ndf: np.ndarray, _dtype=torch.float16) -> np.ndarray:
+def corr_coef(_ndf: np.ndarray, _dtype=torch.float16, min_n_nan: int=10) -> np.ndarray:
+    """
+    相関係数の計算をGPU化. 厳密には正しくない
+    Explain::
+        分散や平均は、厳密には各列ペア毎に算出しないといけないが、計算空間が膨大になるため各列内で完結して実施している
+        以下のような場合に、nan は無視して計算するので正しくは相関は1になるが、分散や平均の計算によって相関が10になったりする.
+        以下の場合は２列目の分散が1以下のため、1 / 0.XX で1以上になる
+        tensor([[   nan, 0.0219],
+                [1.0000, 1.0000],
+                [   nan, 0.1005],
+                [   nan, 0.1036]],
+    """
     logger.info("START")
     # float16だと内積の計算で発散するので先に規格化する
-    tensor_max  = torch.from_numpy(np.nanmax( _ndf, axis=0)).to(_dtype).to("cuda:0")
-    tensor_min  = torch.from_numpy(np.nanmin( _ndf, axis=0)).to(_dtype).to("cuda:0")
-    ndf = torch.from_numpy(_ndf).to(_dtype).to("cuda:0")
-    ndf = (ndf - tensor_min) / tensor_max
-    # nan 付きのvalueなのでnumpyでまずは処理する
-    tensor_mean = torch.from_numpy(np.nanmean(ndf.cpu().numpy().astype(np.float32), axis=0)).to(_dtype).to("cuda:0")
-    tensor_std  = torch.from_numpy(np.nanstd( ndf.cpu().numpy().astype(np.float32), axis=0)).to(_dtype).to("cuda:0")
-    # 平均を引く
-    tensor_Sxy = (ndf - tensor_mean).to(_dtype)
-    # この時点でまずはnanのカウントをとる
-    is_nan = torch.isnan(tensor_Sxy) # ここはboolean
-    is_nan = torch.mm((~is_nan).t().half(), (~is_nan).half()).to(_dtype)
-    # nanを0埋めしてから内積を計算する
-    ## 下記の処理は一度cpuに落としてからやった方が早い
-    _wk = torch.isnan(tensor_Sxy).to("cpu")
-    tensor_Sxy = tensor_Sxy.to("cpu")
-    tensor_Sxy[_wk] = 0
-    ## GPUに戻す
-    tensor_Sxy = tensor_Sxy.to("cuda:0")
-    # 内積を計算する
-    tensor_Sxy = (torch.mm(tensor_Sxy.t(), tensor_Sxy)).to(_dtype)
-    tensor_Sxy = (tensor_Sxy / is_nan).to(_dtype)
-    
-    # 横軸分複製して、転置したものと掛けることによって分散×分散を計算する
-    ## メモリが足らなくなるので一度CPUに戻して連結し、GPUに入れる
-    tensor_SxSy = (torch.cat([tensor_std.reshape(1, -1) for i in range(ndf.shape[1])], dim=0)).to(_dtype)
-    tensor_SxSy = (tensor_SxSy.t() * tensor_SxSy).to(_dtype)
-    
-    # numpyに戻すと少し計算がずれる(infがあればnanにしておく)
-    ndf = (tensor_Sxy / tensor_SxSy).cpu().detach().numpy()
-    ndf[ndf ==  np.inf] = np.nan
-    ndf[ndf == -np.inf] = np.nan
-
+    with torch.no_grad():
+        tensor_max = torch.from_numpy(np.nanmax( _ndf, axis=0)).to(_dtype).to("cuda:0")
+        tensor_min = torch.from_numpy(np.nanmin( _ndf, axis=0)).to(_dtype).to("cuda:0")
+        tensor_max = (tensor_max - tensor_min).cpu().numpy()
+        tensor_max[tensor_max == 0] = float("inf") # 0除算を避けるため
+        tensor_max = torch.from_numpy(tensor_max).to("cuda:0")
+        ndf = torch.from_numpy(_ndf).to(_dtype).to("cuda:0")
+        ndf = (ndf - tensor_min) / tensor_max
+        # nan 付きのvalueなのでnumpyでまずは処理する
+        tensor_mean = torch.from_numpy(np.nanmean(ndf.cpu().numpy().astype(np.float32), axis=0)).to(_dtype).to("cuda:0")
+        tensor_std  = torch.from_numpy(np.nanstd( ndf.cpu().numpy().astype(np.float32), axis=0)).to(_dtype).to("cuda:0")
+        # 平均を引く
+        tensor_Sxy = (ndf - tensor_mean).to(_dtype)
+        del ndf, tensor_max, tensor_min, tensor_mean # memory 解放
+        # この時点でまずはnanのカウントをとる
+        n_nan = torch.isnan(tensor_Sxy) # ここはboolean
+        n_nan = torch.mm((~n_nan).t().to(torch.float16), (~n_nan).to(torch.float16)).to(_dtype).cpu().numpy()
+        n_nan[n_nan < min_n_nan] = float("inf") # 多分 replace の処理はGPU的に重い
+        n_nan = torch.from_numpy(n_nan).to(_dtype).to("cuda:0")
+        """
+        >>> torch.mm((~n_nan).t().to(torch.float16), (~n_nan).to(torch.float16)).to(_dtype)
+        tensor([[3., 3., 0., 0., 0.],
+                [3., 8., 3., 0., 0.],
+                [0., 3., 4., 0., 0.]], device='cuda:0', dtype=torch.float16)
+        """
+        # nanを0埋めしてから内積を計算する
+        ## 下記の処理は一度cpuに落としてからやった方が早い
+        is_nan = torch.isnan(tensor_Sxy).cpu() # isnanがcuda上でしかできない
+        tensor_Sxy = tensor_Sxy.cpu()
+        tensor_Sxy[is_nan] = 0
+        ## GPUに戻す
+        tensor_Sxy = tensor_Sxy.to(_dtype).to("cuda:0")
+        # 内積を計算する
+        tensor_Sxy = (torch.mm(tensor_Sxy.t(), tensor_Sxy)).to(_dtype)
+        tensor_Sxy = (tensor_Sxy / n_nan)
+        # 横軸分複製して、転置したものと掛けることによって分散×分散を計算する
+        ## メモリが足らなくなるので一度CPUに戻して連結し、GPUに入れる
+        tensor_SxSy = tensor_std.reshape(1, -1).repeat(tensor_std.shape[0], 1).to(_dtype)
+        tensor_SxSy = (tensor_SxSy.t() * tensor_SxSy)
+        # numpyに戻すと少し計算がずれる(infがあればnanにしておく)
+        ndf = (tensor_Sxy / tensor_SxSy).to(_dtype).cpu().numpy()
+        ndf[ndf ==  np.inf] = np.nan
+        ndf[ndf == -np.inf] = np.nan
     logger.info("END")
     return ndf
 

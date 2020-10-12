@@ -1,3 +1,4 @@
+import datetime
 from typing import List, Tuple
 import numpy as np
 import pandas as pd
@@ -139,7 +140,7 @@ class MyModel:
         self.logger.info("END")
 
 
-    def cut_features_by_correlation(self, df, cutoff=0.9, ignore_nan_mode=0, on_gpu_size=1):
+    def cut_features_by_correlation(self, df, cutoff=0.9, ignore_nan_mode=0, on_gpu_size=1, min_n_nan=10):
         """
         相関係数の高い値の特徴量をカットする
         ※欠損無視(ignore_nan=True)しての計算は計算量が多くなるので注意
@@ -155,7 +156,7 @@ class MyModel:
         self.logger.info("START")
         self.logger.info(f"df shape:{df.shape}, cutoff:{cutoff}, ignore_nan_mode:{ignore_nan_mode}")
         self.logger.info(f"features:{self.colname_explain.shape}")
-        df_corr, _ = search_features_by_correlation(df[self.colname_explain], cutoff=cutoff, ignore_nan_mode=ignore_nan_mode, on_gpu_size=on_gpu_size, n_jobs=self.n_jobs)
+        df_corr, _ = search_features_by_correlation(df[self.colname_explain], cutoff=cutoff, ignore_nan_mode=ignore_nan_mode, on_gpu_size=on_gpu_size, min_n_nan=min_n_nan, n_jobs=self.n_jobs)
         self.correlation = df_corr.copy()
         alive_features, cut_features = self.features_by_correlation(cutoff)
         self.update_features(cut_features, alive_features=alive_features) # 特徴量の更新
@@ -739,10 +740,13 @@ class MyModel:
     def search_hyper_params(
         self, df: pd.DataFrame, tuning_eval: str, n_trials: int=10, df_test: pd.DataFrame=None, dict_param="auto", iters: int=None,
         split_params: dict={"n_splits":1,"y_type":"cls","weight":"balance","is_bootstrap":False}, 
-        fit_params: dict={}, eval_params: dict={}
+        fit_params: dict={}, eval_params: dict={}, storage: str=None
     ):
+        """
+        Params::
+            storage: optuna の履歴を保存する
+        """
         self.logger.info("START")
-
         # numpyに変換
         X, Y = self.preproc(df)
         ## 各データが１種類の場合は、元に戻す
@@ -753,9 +757,12 @@ class MyModel:
             X_test, Y_test = self.preproc(df_test)
             if len(X_test) == 1: X_test = X_test[0]
             if len(Y_test) == 1: Y_test = Y_test[0]
-
         # データの数を変えながら探索する
-        self.optuna: optuna.study.Study = optuna.create_study()
+        self.optuna: optuna.study.Study = optuna.create_study(
+            study_name='optuna_'+datetime.datetime.now().strftime("%Y%m%d%H%M%S"),
+            storage='sqlite:///optuna_'+datetime.datetime.now().strftime("%Y%m%d%H%M%S")+'.db' if not storage else storage, 
+            load_if_exists=False if not storage else True
+        )
         df_optuna, best_params = search_hyperparams_by_optuna(
             self.optuna, self.model, X, Y, n_trials=n_trials, iters=iters, X_test=X_test, Y_test=Y_test, dict_param=dict_param, 
             tuning_eval=tuning_eval, split_params=split_params, fit_params=fit_params, eval_params=eval_params, n_jobs=self.n_jobs
