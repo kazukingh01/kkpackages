@@ -55,6 +55,7 @@ class ProcRegistry(object):
             else:
                 ndf = df[self.processing[name]["cols"]].values.copy()
             for _proc in self.processing[name]["proc"]:
+                logger.info(f'proc: {_proc}')
                 shape_before = ndf.shape
                 logger.info(f"before shape: {ndf.shape}")
                 ndf = _proc(ndf)
@@ -138,6 +139,7 @@ class ProcRegistry(object):
             else:
                 ndf = df[self.processing[name]["cols"]].values
             for _proc in self.processing[name]["proc"]:
+                logger.info(f'proc: {_proc}')
                 if is_callable(_proc, "fit"):
                     # Fitting
                     _proc.fit(ndf)
@@ -149,16 +151,19 @@ class ProcRegistry(object):
 
 
 class MyMinMaxScaler(MinMaxScaler):
+    def __str__(self): return self.__class__.__name__
     def __call__(self, ndf: np.ndarray):
         return self.transform(ndf)
 
 class MyStandardScaler(StandardScaler):
+    def __str__(self): return self.__class__.__name__
     def __call__(self, ndf: np.ndarray):
         return self.transform(ndf)
 
 class MyPCA(object):
     def __init__(self, pca_cutoff: float=0.99):
         self.model = PCA(n_components=pca_cutoff)
+    def __str__(self): return self.__class__.__name__
     def __call__(self, ndf):
         return self.model.transform(ndf)
     def fit(self, ndf: np.ndarray):
@@ -172,6 +177,8 @@ class MyFillNa(object):
         """
         self.fill_value = fill_value
         self.fit_values = None
+    def __str__(self):
+        return f'{self.__class__.__name__}(fill_value: {self.fill_value})'
     def __call__(self, ndf: np.ndarray):
         ndf = ndf.copy()
         if (type(self.fill_value) == str):
@@ -198,6 +205,8 @@ class MyFillNaRandom(object):
     def __init__(self, bins: int=100):
         self.bins = bins
         self.hist = []
+    def __str__(self):
+        return f'{self.__class__.__name__}(bins: {self.bins})'
     def __call__(self, ndf: np.ndarray):
         is_nan = np.isnan(ndf)
         n_nan  = is_nan.sum(axis=0)
@@ -205,6 +214,7 @@ class MyFillNaRandom(object):
             if n_nan[i] == 0: continue
             choice = np.random.choice(bins, n_nan[i], p=dens)
             ndf[is_nan[:, i], i] = choice
+        return ndf
     def fit(self, ndf: np.ndarray):
         self.hist = [np.histogram(ndf[:, i], bins=self.bins) for i in np.arange(ndf.shape[1])]
         self.hist = [(np.array([bins[j:j+2].mean() for j in np.arange(self.bins)]), (dens / dens.sum())) for dens, bins in self.hist]
@@ -214,6 +224,8 @@ class MyFillNaMinMax(object):
         self.add_value  = add_value
         self.min = np.zeros(0)
         self.max = np.zeros(0)
+    def __str__(self):
+        return f'{self.__class__.__name__}()'
     def __call__(self, ndf: np.ndarray):
         is_nan = np.isnan(ndf)
         n_nan  = is_nan.sum(axis=0)
@@ -221,6 +233,7 @@ class MyFillNaMinMax(object):
             if n_nan[i] == 0: continue
             choice = np.random.choice([_min, _max], n_nan[i])
             ndf[is_nan[:, i], i] = choice
+        return ndf
     def fit(self, ndf: np.ndarray):
         self.min = np.nanmin(ndf, axis=0) - self.add_value
         self.max = np.nanmax(ndf, axis=0) + self.add_value
@@ -229,6 +242,8 @@ class MyReplaceValue:
     def __init__(self, target_value: object, replace_value: object):
         self.target_value  = target_value
         self.replace_value = replace_value
+    def __str__(self):
+        return f'{self.__class__.__name__}(target_value: {self.target_value}, replace_value: {self.replace_value})'
     def __call__(self, ndf: np.ndarray):
         ndf = ndf.copy()
         ndf[ndf == self.target_value] = self.replace_value
@@ -239,6 +254,7 @@ class MyOneHotEncoder:
         check_type(target_indexes, [list, tuple])
         self.target_indexes = target_indexes
         self.model = OneHotEncoder(categories='auto')
+    def __str__(self): return self.__class__.__name__
     def __call__(self, ndf: np.ndarray):
         bool_col = np.zeros(ndf.shape[1]).astype(bool)
         bool_col[self.target_indexes] = True
@@ -253,6 +269,8 @@ class MyAsType:
     """ Classを定義しないとpickle化できない """
     def __init__(self, convert_type: object):
         self.convert_type = convert_type
+    def __str__(self):
+        return f'{self.__class__.__name__}(convert_type: {self.convert_type})'
     def __call__(self, ndf: np.ndarray):
         ndf = ndf.copy().astype(self.convert_type)
         return ndf
@@ -261,6 +279,8 @@ class MyReshape:
     """ Classを定義しないとpickle化できない """
     def __init__(self, convert_shape: tuple):
         self.convert_shape = convert_shape if type(convert_shape) in [list, tuple] else (convert_shape, )
+    def __str__(self):
+        return f'{self.__class__.__name__}(convert_shape: {self.convert_shape})'
     def __call__(self, ndf: np.ndarray):
         ndf = ndf.copy().reshape(*self.convert_shape)
         return ndf
@@ -268,6 +288,8 @@ class MyReshape:
 class MyDropNa:
     def __init__(self, colname: str):
         self.colname = colname
+    def __str__(self):
+        return f'{self.__class__.__name__}(colname: {self.colname})'
     def __call__(self, df: pd.DataFrame):
         return df.loc[~df[self.colname].isna(), :]
 

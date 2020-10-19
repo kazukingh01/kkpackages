@@ -116,7 +116,7 @@ def search_hyperparams_by_optuna(
         split_params:
             この設定に従ってsplit_data_balanceでデータを分割もしくはアンダーオーバーサンプリングする。
             X_test, Y_test がNoneでなければ検証データはこちらが優先されるが、Noneの場合
-            split_data_balanceのindexを訓練と検証に使用して交差顕彰を行う
+            split_data_balanceのindexを訓練と検証に使用して交差検証を行う
         fit_params: fit 時のパラメータ
         eval_params: 評価時のパラメータ
     """
@@ -142,7 +142,7 @@ def search_hyperparams_by_optuna(
                 "min_child_samples":["int",1,1000], 
                 "subsample"        :["step", 0.01,  0.99,  0.01], 
                 "colsample_bytree" :["step", 0.001, 0.99, 0.001], 
-                "reg_alpha"        :["const", 0],
+                "reg_alpha"        :["category", 0] + [0.01 * (2**i) for i in range(23)],
                 "reg_lambda"       :["category", 0] + [0.01 * (2**i) for i in range(23)],
                 "random_state"     :["const",1], 
                 "n_jobs"           :["const", n_jobs] 
