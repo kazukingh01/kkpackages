@@ -98,7 +98,7 @@ def search_features_by_variance(df: pd.DataFrame, cutoff: float=0.99, ignore_nan
 
 
 
-def search_features_by_correlation(df: pd.DataFrame, cutoff: float=0.9, ignore_nan_mode: int=0, on_gpu_size: int=1, min_n_nan: int=10, n_jobs: int=1) -> (pd.DataFrame, list, ):
+def search_features_by_correlation(df: pd.DataFrame, cutoff: float=0.9, ignore_nan_mode: int=0, n_div_col: int=1, on_gpu_size: int=1, min_n_not_nan: int=10, n_jobs: int=1) -> (pd.DataFrame, list, ):
     """
     相関係数の高い値の特徴量をカットする
     ※欠損無視(ignore_nan=True)しての計算は計算量が多くなるので注意
@@ -109,8 +109,9 @@ def search_features_by_correlation(df: pd.DataFrame, cutoff: float=0.9, ignore_n
             1: np.corrcoef で計算. nan は平均値で埋める
             2: pandas で計算する. nan は無視して計算するが遅いので並列化している
             3: GPUを使って高速に計算する. nanは無視して計算する
-        on_gpu_size: ignore_nan_mode=3のときに使う. 行列が全てGPUに乗り切らないときに、何分割するかの数字
-        min_n_nan: ignore_nan_mode=3のときに使う. 
+                n_div_col: columns が大きすぎるの行列計算でメモリに乗らないため、columns を分割する. 10000 を超えると難しい
+                on_gpu_size: ignore_nan_mode=3のときに使う. 行列が全てGPUに乗り切らないときに、何分割するかの数字
+                min_n_nan: ignore_nan_mode=3のときに使う. 
         n_jobs: ignore_nan_mode=2 のときの並列数
     """
     logger.info("START")
@@ -228,23 +229,34 @@ def search_features_by_correlation(df: pd.DataFrame, cutoff: float=0.9, ignore_n
         ## メモリ不足解消のためランダムに分割してからastype(np.float32)する.内部でさらにfloat16で処理させる
         logger.info("ignore_nan_mode:3. Calculate with GPU.")
         _size = df.shape[0] // on_gpu_size
+        _cols = df.shape[1] // n_div_col
         ndf_index = np.random.permutation(np.arange(df.shape[0]))
-        ndf_corr  = np.zeros(df.columns.values.shape[0]*df.columns.values.shape[0]).\
-                    reshape(df.columns.values.shape[0], -1)
-        for _i in range(on_gpu_size):
-            logger.info(f"ignore_nan_mode:3. try: {_i}")
-            ## 端数のデータは捨てても良い方針
-            ndf = df.iloc[(ndf_index[(_size*_i):(_size*(_i+1))]), :].copy().values.astype(np.float32)
-            ndf = corr_coef(ndf, _dtype=torch.float16).astype(np.float32)
-            ndf_corr = ndf_corr + ndf
-        ndf_corr = ndf_corr / float(on_gpu_size)
+        ndf_corr  = np.zeros((df.shape[1], df.shape[1]), dtype=np.float16).astype(np.float16)
+        if n_div_col > 1:
+            for _i in range(on_gpu_size):
+                pattern = [(j,i,) for i in range(n_div_col) for j in range(i+1)]
+                for _j, _k in pattern:
+                    logger.info(f"ignore_nan_mode:3. try: {_i}, {_j}, {_k}")
+                    ## 端数のデータは捨てても良い方針
+                    ndf1 = df.iloc[(ndf_index[(_size*_i):(_size*(_i+1))]), _j*_cols:( (_j+1)*_cols if _j != (n_div_col-1) else df.shape[1] )].copy().values.astype(np.float32)
+                    ndf2 = df.iloc[(ndf_index[(_size*_i):(_size*(_i+1))]), _k*_cols:( (_k+1)*_cols if _k != (n_div_col-1) else df.shape[1] )].copy().values.astype(np.float32)
+                    ndf  = corr_coef_2ndarray(ndf2, ndf1, _dtype=torch.float16, min_n_not_nan=min_n_not_nan).astype(np.float16)
+                    ndf_corr[_j*_cols:( (_j+1)*_cols if _j != (n_div_col-1) else df.shape[1] ), _k*_cols:( (_k+1)*_cols if _k != (n_div_col-1) else df.shape[1] )] += ndf
+                    del ndf1, ndf2, ndf
+        else:
+            for _i in range(on_gpu_size):
+                logger.info(f"ignore_nan_mode:3. try: {_i}")
+                ## 端数のデータは捨てても良い方針
+                ndf = df.iloc[(ndf_index[(_size*_i):(_size*(_i+1))]), :].copy().values.astype(np.float32)
+                ndf = corr_coef(ndf, _dtype=torch.float16, min_n_not_nan=min_n_not_nan).astype(np.float16)
+                ndf_corr = ndf_corr + ndf
+        ndf_corr = ndf_corr / np.float16(on_gpu_size)
         ## N(特徴量)×Nの行列になっている。下記領域■を0にしないと、cut_listの計算で狂う
         ## ■□□
         ## ■■□
         ## ■■■
         for _i in np.arange(ndf_corr.shape[1]):
             ndf_corr[_i:, _i] = np.nan
-        print(1)
         ## cut対象を絞る
         cut_list = df.columns.values[( ((ndf_corr > cutoff) | (ndf_corr < -1*cutoff)).sum(axis=0) > 0 )]
 
@@ -254,61 +266,276 @@ def search_features_by_correlation(df: pd.DataFrame, cutoff: float=0.9, ignore_n
     return df_corr, cut_list
 
 
-def corr_coef(_ndf: np.ndarray, _dtype=torch.float16, min_n_nan: int=10) -> np.ndarray:
+def corr_coef(_ndf: np.ndarray, _dtype=torch.float16, min_n_not_nan: int=10) -> np.ndarray:
     """
-    相関係数の計算をGPU化. 厳密には正しくない
-    Explain::
-        分散や平均は、厳密には各列ペア毎に算出しないといけないが、計算空間が膨大になるため各列内で完結して実施している
-        以下のような場合に、nan は無視して計算するので正しくは相関は1になるが、分散や平均の計算によって相関が10になったりする.
-        以下の場合は２列目の分散が1以下のため、1 / 0.XX で1以上になる
-        tensor([[   nan, 0.0219],
-                [1.0000, 1.0000],
-                [   nan, 0.1005],
-                [   nan, 0.1036]],
+    相関係数の計算をGPU化.
     """
     logger.info("START")
     # float16だと内積の計算で発散するので先に規格化する
     with torch.no_grad():
-        tensor_max = torch.from_numpy(np.nanmax( _ndf, axis=0)).to(_dtype).to("cuda:0")
-        tensor_min = torch.from_numpy(np.nanmin( _ndf, axis=0)).to(_dtype).to("cuda:0")
+        """
+        >>> _ndf
+        array([[ 2.,  1.,  3., nan, nan],
+               [ 0.,  2.,  2., nan, -3.],
+               [ 8.,  2.,  9., nan, -7.],
+               [ 1., nan,  5.,  5., -1.]])
+        """
+        tensor_max = torch.from_numpy(np.nanmax(_ndf, axis=0)).to(_dtype).to("cuda:0")
+        tensor_min = torch.from_numpy(np.nanmin(_ndf, axis=0)).to(_dtype).to("cuda:0")
         tensor_max = (tensor_max - tensor_min).cpu().numpy()
         tensor_max[tensor_max == 0] = float("inf") # 0除算を避けるため
         tensor_max = torch.from_numpy(tensor_max).to("cuda:0")
+        """
+        >>> tensor_min
+        tensor([ 0.,  1.,  2.,  5., -7.], device='cuda:0', dtype=torch.float16)
+        >>> tensor_max
+        tensor([8., 1., 7., inf, 6.], device='cuda:0', dtype=torch.float16)
+        """
         ndf = torch.from_numpy(_ndf).to(_dtype).to("cuda:0")
         ndf = (ndf - tensor_min) / tensor_max
-        # nan 付きのvalueなのでnumpyでまずは処理する
-        tensor_mean = torch.from_numpy(np.nanmean(ndf.cpu().numpy().astype(np.float32), axis=0)).to(_dtype).to("cuda:0")
-        tensor_std  = torch.from_numpy(np.nanstd( ndf.cpu().numpy().astype(np.float32), axis=0)).to(_dtype).to("cuda:0")
-        # 平均を引く
-        tensor_Sxy = (ndf - tensor_mean).to(_dtype)
-        del ndf, tensor_max, tensor_min, tensor_mean # memory 解放
-        # この時点でまずはnanのカウントをとる
-        n_nan = torch.isnan(tensor_Sxy) # ここはboolean
-        n_nan = torch.mm((~n_nan).t().to(torch.float16), (~n_nan).to(torch.float16)).to(_dtype).cpu().numpy()
-        n_nan[n_nan < min_n_nan] = float("inf") # 多分 replace の処理はGPU的に重い
-        n_nan = torch.from_numpy(n_nan).to(_dtype).to("cuda:0")
+        del tensor_min, tensor_max
+        # 列ペア毎のmeanを計算する
+        is_nan = torch.isnan(ndf)
         """
-        >>> torch.mm((~n_nan).t().to(torch.float16), (~n_nan).to(torch.float16)).to(_dtype)
-        tensor([[3., 3., 0., 0., 0.],
-                [3., 8., 3., 0., 0.],
-                [0., 3., 4., 0., 0.]], device='cuda:0', dtype=torch.float16)
+        >>> is_nan
+        tensor([[False, False, False,  True,  True],
+                [False, False, False,  True, False],
+                [False, False, False,  True, False],
+                [False,  True, False, False, False]], device='cuda:0')
         """
-        # nanを0埋めしてから内積を計算する
-        ## 下記の処理は一度cpuに落としてからやった方が早い
-        is_nan = torch.isnan(tensor_Sxy).cpu() # isnanがcuda上でしかできない
-        tensor_Sxy = tensor_Sxy.cpu()
-        tensor_Sxy[is_nan] = 0
-        ## GPUに戻す
-        tensor_Sxy = tensor_Sxy.to(_dtype).to("cuda:0")
-        # 内積を計算する
-        tensor_Sxy = (torch.mm(tensor_Sxy.t(), tensor_Sxy)).to(_dtype)
-        tensor_Sxy = (tensor_Sxy / n_nan)
-        # 横軸分複製して、転置したものと掛けることによって分散×分散を計算する
-        ## メモリが足らなくなるので一度CPUに戻して連結し、GPUに入れる
-        tensor_SxSy = tensor_std.reshape(1, -1).repeat(tensor_std.shape[0], 1).to(_dtype)
-        tensor_SxSy = (tensor_SxSy.t() * tensor_SxSy)
+        ndf = ndf.cpu()
+        ndf[is_nan.cpu()] = 0
+        ndf = ndf.to(_dtype).to("cuda:0")
+        """
+        >>> ndf
+        tensor([[0.2500, 0.0000, 0.1428, 0.0000, 0.0000],
+                [0.0000, 1.0000, 0.0000, 0.0000, 0.6665],
+                [1.0000, 1.0000, 1.0000, 0.0000, 0.0000],
+                [0.1250, 0.0000, 0.4285, 0.0000, 1.0000]], device='cuda:0', dtype=torch.float16)
+        """
+        tensor_sum = torch.mm((~is_nan).to(_dtype).t(), ndf).to(_dtype)
+        """
+        >>> tensor_sum
+        tensor([[1.3750, 2.0000, 1.5713, 0.0000, 1.6660],
+                [1.2500, 2.0000, 1.1426, 0.0000, 0.6665],
+                [1.3750, 2.0000, 1.5713, 0.0000, 1.6660],
+                [0.1250, 0.0000, 0.4285, 0.0000, 1.0000],
+                [1.1250, 2.0000, 1.4287, 0.0000, 1.6660]], device='cuda:0', dtype=torch.float16)
+        """
+        n_not_nan = torch.mm((~is_nan).t().to(_dtype), (~is_nan).to(_dtype)).to(_dtype)
+        n_not_nan = n_not_nan.cpu().numpy()
+        n_not_nan[(n_not_nan < float(min_n_not_nan))] = float("inf")
+        n_not_nan = torch.from_numpy(n_not_nan).to(_dtype).to("cuda:0")
+        """
+        >>> n_not_nan
+        tensor([[4., 3., 4., 1., 3.],
+                [3., 3., 3., 0., 2.],
+                [4., 3., 4., 1., 3.],
+                [1., 0., 1., 1., 1.],
+                [3., 2., 3., 1., 3.]], device='cuda:0', dtype=torch.float16)
+        """
+        tensor_mean = tensor_sum / n_not_nan # 列ペア毎のmean
+        """
+        >>> tensor_mean
+        tensor([[0.3438, 0.6665, 0.3928, 0.0000, 0.5552],
+                [0.4167, 0.6665, 0.3809,    nan, 0.3333],
+                [0.3438, 0.6665, 0.3928, 0.0000, 0.5552],
+                [0.1250,    nan, 0.4285, 0.0000, 1.0000],
+                [0.3750, 1.0000, 0.4763, 0.0000, 0.5552]], device='cuda:0', dtype=torch.float16)
+        """
+        # 共分散を計算する
+        """
+        1/n * {Sigma(xi * yi) - Sigma(xi * ym) - Sigma(yi * xm) + Sigma(xm * ym)}
+        1/n * {Sigma(xi * yi) - ym*Sigma(xi) - xm*Sigma(yi) + n * xm * ym}
+        """
+        tensor_xiyi = torch.mm(ndf.t(), ndf)
+        tensor_xiym =  tensor_mean.t() * tensor_sum
+        tensor_yixm = (tensor_mean.t() * tensor_sum).t()
+        tensor_xmym =  tensor_mean.t() * tensor_mean * n_not_nan
+        tensor_Sxy  = (tensor_xiyi - tensor_xiym - tensor_yixm + tensor_xmym) / n_not_nan
+        """
+        >>> tensor_xiyi
+        tensor([[1.0781, 1.0000, 1.0889, 0.0000, 0.1250],
+                [1.0000, 2.0000, 1.0000, 0.0000, 0.6665],
+                [1.0889, 1.0000, 1.2041, 0.0000, 0.4285],
+                [0.0000, 0.0000, 0.0000, 0.0000, 0.0000],
+                [0.1250, 0.6665, 0.4285, 0.0000, 1.4443]], device='cuda:0', dtype=torch.float16)
+        >>> tensor_xiym
+        tensor([[0.4727, 0.8335, 0.5400, 0.0000, 0.6250],
+                [0.8330, 1.3330, 0.7617,    nan, 0.6665],
+                [0.5400, 0.7617, 0.6172, 0.0000, 0.7935],
+                [0.0000,    nan, 0.0000, 0.0000, 0.0000],
+                [0.6245, 0.6665, 0.7930, 0.0000, 0.9248]], device='cuda:0', dtype=torch.float16)
+        >>> tensor_Sxy
+        tensor([[ 0.1514,  0.0557,  0.1372,  0.0000, -0.1666],
+                [ 0.0557,  0.2223,  0.0794,     nan,  0.0000],
+                [ 0.1372,  0.0794,  0.1467,  0.0000, -0.1218],
+                [ 0.0000,     nan,  0.0000,  0.0000,  0.0000],
+                [-0.1666,  0.0000, -0.1218,  0.0000,  0.1730]], device='cuda:0', dtype=torch.float16)
+        """
+        """
+        1/n * {Sigma(xi * xi) - 2xm*Sigma(xi) + n * xm * xm}
+        """
+        tensor_xi2  = ndf * ndf
+        tensor_xi2  = torch.mm((~is_nan).to(_dtype).t(), tensor_xi2).to(_dtype)
+        tensor_Sxx  = (tensor_xi2 - 2 * (tensor_mean * tensor_sum) + tensor_mean ** 2 *  n_not_nan) / n_not_nan
+        tensor_Syy  = tensor_Sxx.t()
         # numpyに戻すと少し計算がずれる(infがあればnanにしておく)
-        ndf = (tensor_Sxy / tensor_SxSy).to(_dtype).cpu().numpy()
+        ndf = (tensor_Sxy / torch.sqrt(tensor_Sxx * tensor_Syy)).to(_dtype).cpu().numpy()
+        ndf[ndf ==  np.inf] = np.nan
+        ndf[ndf == -np.inf] = np.nan
+    logger.info("END")
+    return ndf
+
+
+def corr_coef_2ndarray(_ndf1: np.ndarray, _ndf2: np.ndarray, _dtype=torch.float16, min_n_not_nan: int=10) -> np.ndarray:
+    """
+    相関係数の計算をGPU化. 別のarrayでの計算
+    """
+    logger.info("START")
+    with torch.no_grad():
+        """
+        >>> _ndf1
+        array([[ 2.,  1.,  3., nan, nan],
+            [ 0.,  2.,  2., nan, -3.],
+            [ 8.,  2.,  9., nan, -7.],
+            [ 1., nan,  5.,  5., -1.]])
+        >>> _ndf2
+        array([[ 2.,  1., nan],
+            [ 2., nan, -3.],
+            [ 3., -2., -1.],
+            [ 9., nan,  3.]])
+        """
+        ndf1, ndf2 = None, None
+        for i, _ndf in enumerate([_ndf1, _ndf2]):
+            # Float16 でも値が overflow しないように規格化する
+            tensor_max = torch.from_numpy(np.nanmax(_ndf, axis=0)).to(_dtype).to("cuda:0")
+            tensor_min = torch.from_numpy(np.nanmin(_ndf, axis=0)).to(_dtype).to("cuda:0")
+            tensor_max = (tensor_max - tensor_min).cpu().numpy()
+            tensor_max[tensor_max == 0] = float("inf") # 0除算を避けるため
+            tensor_max = torch.from_numpy(tensor_max).to("cuda:0")
+            if i == 0:
+                ndf1 = torch.from_numpy(_ndf).to(_dtype).to("cuda:0")
+                ndf1 = (ndf1 - tensor_min) / tensor_max
+            else:
+                ndf2 = torch.from_numpy(_ndf).to(_dtype).to("cuda:0")
+                ndf2 = (ndf2 - tensor_min) / tensor_max
+            del tensor_min, tensor_max
+        # 列ペア毎のmeanを計算する
+        is_nan1 = torch.isnan(ndf1)
+        is_nan2 = torch.isnan(ndf2)
+        """
+        >>> is_nan1
+        tensor([[False, False, False,  True,  True],
+                [False, False, False,  True, False],
+                [False, False, False,  True, False],
+                [False,  True, False, False, False]], device='cuda:0')
+        """
+        ndf1 = ndf1.cpu()
+        ndf1[is_nan1.cpu()] = 0
+        ndf1 = ndf1.to(_dtype).to("cuda:0")
+        ndf2 = ndf2.cpu()
+        ndf2[is_nan2.cpu()] = 0
+        ndf2 = ndf2.to(_dtype).to("cuda:0")
+        """
+        >>> ndf1
+        tensor([[0.2500, 0.0000, 0.1428, 0.0000, 0.0000],
+                [0.0000, 1.0000, 0.0000, 0.0000, 0.6665],
+                [1.0000, 1.0000, 1.0000, 0.0000, 0.0000],
+                [0.1250, 0.0000, 0.4285, 0.0000, 1.0000]], device='cuda:0', dtype=torch.float16)
+        >>> ndf2
+        tensor([[0.0000, 1.0000, 0.0000],
+                [0.0000, 0.0000, 0.0000],
+                [0.1428, 0.0000, 0.3333],
+                [1.0000, 0.0000, 1.0000]], device='cuda:0', dtype=torch.float16)
+        """
+        tensor_sum1 = torch.mm((~is_nan2).to(_dtype).t(), ndf1).to(_dtype)
+        tensor_sum2 = torch.mm(ndf2.t(), (~is_nan1).to(_dtype)).to(_dtype)
+        """
+        >>> tensor_sum1
+        tensor([[1.3750, 2.0000, 1.5713, 0.0000, 1.6660],
+                [1.2500, 1.0000, 1.1426, 0.0000, 0.0000],
+                [1.1250, 2.0000, 1.4287, 0.0000, 1.6660]], device='cuda:0', dtype=torch.float16)
+        >>> tensor_sum2
+        tensor([[1.1426, 0.1428, 1.1426, 1.0000, 1.1426],
+                [1.0000, 1.0000, 1.0000, 0.0000, 0.0000],
+                [1.3330, 0.3333, 1.3330, 1.0000, 1.3330]], device='cuda:0', dtype=torch.float16)
+        """
+        n_not_nan = torch.mm((~is_nan2).t().to(_dtype), (~is_nan1).to(_dtype)).to(_dtype)
+        n_not_nan = n_not_nan.cpu().numpy()
+        n_not_nan[(n_not_nan < float(min_n_not_nan))] = float("inf")
+        n_not_nan = torch.from_numpy(n_not_nan).to(_dtype).to("cuda:0")
+        """
+        >>> n_not_nan
+        tensor([[4., 3., 4., 1., 3.],
+                [2., 2., 2., 0., 1.],
+                [3., 2., 3., 1., 3.]], device='cuda:0', dtype=torch.float16)
+        """
+        tensor_mean1 = tensor_sum1 / n_not_nan # 列ペア毎のmean
+        tensor_mean2 = tensor_sum2 / n_not_nan
+        """
+        >>> tensor_mean1
+        tensor([[0.3438, 0.6665, 0.3928, 0.0000, 0.5552],
+                [0.6250, 0.5000, 0.5713,    nan, 0.0000],
+                [0.3750, 1.0000, 0.4763, 0.0000, 0.5552]], device='cuda:0', dtype=torch.float16)
+        >>> tensor_mean2
+        tensor([[0.2856, 0.0476, 0.2856, 1.0000, 0.3809],
+                [0.5000, 0.5000, 0.5000,    nan, 0.0000],
+                [0.4443, 0.1666, 0.4443, 1.0000, 0.4443]], device='cuda:0', dtype=torch.float16)
+        """
+        # 共分散を計算する
+        """
+        1/n * {Sigma(xi * yi) - Sigma(xi * ym) - Sigma(yi * xm) + Sigma(xm * ym)}
+        1/n * {Sigma(xi * yi) - ym*Sigma(xi) - xm*Sigma(yi) + n * xm * ym}
+        """
+        tensor_xiyi = torch.mm(ndf2.t(), ndf1)
+        tensor_xiym = tensor_mean2 * tensor_sum1
+        tensor_yixm = tensor_mean1 * tensor_sum2
+        tensor_xmym = tensor_mean1 * tensor_mean2 * n_not_nan
+        tensor_Sxy  = (tensor_xiyi - tensor_xiym - tensor_yixm + tensor_xmym)
+        """
+        >>> tensor_xiyi
+        tensor([[0.2678, 0.1428, 0.5713, 0.0000, 1.0000],
+                [0.2500, 0.0000, 0.1428, 0.0000, 0.0000],
+                [0.4583, 0.3333, 0.7617, 0.0000, 1.0000]], device='cuda:0', dtype=torch.float16)
+        >>> tensor_xiym
+        tensor([[0.3928, 0.0952, 0.4487, 0.0000, 0.6343],
+                [0.6250, 0.5000, 0.5713,    nan, 0.0000],
+                [0.5000, 0.3333, 0.6348, 0.0000, 0.7402]], device='cuda:0', dtype=torch.float16)
+        >>> tensor_yixm
+        tensor([[0.3928, 0.0952, 0.4487, 0.0000, 0.6343],
+                [0.6250, 0.5000, 0.5713,    nan, 0.0000],
+                [0.5000, 0.3333, 0.6348, 0.0000, 0.7402]], device='cuda:0', dtype=torch.float16)
+        >>> tensor_xmym
+        tensor([[0.3928, 0.0952, 0.4487, 0.0000, 0.6343],
+                [0.6250, 0.5000, 0.5713,    nan, 0.0000],
+                [0.5000, 0.3333, 0.6348, 0.0000, 0.7402]], device='cuda:0', dtype=torch.float16)
+        >>> tensor_Sxy
+        tensor([[-0.1248,  0.0476,  0.1226,  0.0000,  0.3657],
+                [-0.3750, -0.5000, -0.4287,     nan,  0.0000],
+                [-0.0420,  0.0000,  0.1270,  0.0000,  0.2598]], device='cuda:0', dtype=torch.float16)
+        """
+        """
+        1/n * {Sigma(xi * xi) - 2xm*Sigma(xi) + n * xm * xm}
+        """
+        tensor_xi2  = ndf1 * ndf1
+        tensor_xi2  = torch.mm((~is_nan2).to(_dtype).t(), tensor_xi2).to(_dtype)
+        tensor_Sxx  = (tensor_xi2 - 2 * (tensor_mean1 * tensor_sum1) + tensor_mean1 ** 2 * n_not_nan)
+        tensor_yi2  = ndf2 * ndf2
+        tensor_yi2  = torch.mm(tensor_yi2.t(), (~is_nan1).to(_dtype)).to(_dtype)
+        tensor_Syy  = (tensor_yi2 - 2 * (tensor_mean2 * tensor_sum2) + tensor_mean2 ** 2 * n_not_nan)
+        """
+        >>> tensor_Sxx
+        tensor([[0.6055, 0.6670, 0.5869, 0.0000, 0.5190],
+                [0.2812, 0.5000, 0.3677,    nan, 0.0000],
+                [0.5938, 0.0000, 0.5029, 0.0000, 0.5190]], device='cuda:0', dtype=torch.float16)
+        >>> tensor_Syy
+        tensor([[0.6943, 0.0136, 0.6943, 0.0000, 0.5854],
+                [0.5000, 0.5000, 0.5000,    nan, 0.0000],
+                [0.5190, 0.0555, 0.5190, 0.0000, 0.5190]], device='cuda:0', dtype=torch.float16)
+        """
+        # numpyに戻すと少し計算がずれる(infがあればnanにしておく)
+        ndf = (tensor_Sxy / torch.sqrt(tensor_Sxx * tensor_Syy)).to(_dtype).cpu().numpy()
         ndf[ndf ==  np.inf] = np.nan
         ndf[ndf == -np.inf] = np.nan
     logger.info("END")
@@ -417,7 +644,7 @@ def mic(df_, matrix_bins=100):
     return np.array([df_.columns[0], df_.columns[1], np.nansum(H)])
 
 
-def split_data_balance(Y: np.ndarray, n_splits: int=1, y_type: str="cls", weight="balance", is_bootstrap :bool=False, random_seed: int=1):
+def split_data_balance(Y: np.ndarray, n_splits: int=1, y_type: str="cls", weight="balance", is_bootstrap :bool=False, random_seed: int=1) -> (List[np.ndarray], List[np.ndarray]):
     """
     交差検証用にデータを分割するためのインデックスを返却する
     Return:: (train_index, test_index, )
@@ -617,6 +844,10 @@ def evalate(
         score = 0
         for i in range(y_pred_proba.shape[1]):
             score += (1.0 - (roc_auc_score((y_ans == i), y_pred_proba[:, i])))
+    elif eval_method == "multi_logloss":
+        score = multi_cross_entropy(y_pred_proba, y_ans, is_standardize=False).sum() # mean だと 0 の値も混ざるためダメ
+    elif eval_method == "multi_logloss_with_std":
+        score = multi_cross_entropy(y_pred_proba, y_ans, is_standardize=True).sum() # mean だと 0 の値も混ざるためダメ
     elif eval_method == "accuracy": score = (1.0 - ((y_ans == y_pred).sum() / y_ans.shape[0]))
     elif eval_method == "recall":
         score = 1.0 - (((y_ans == pos_label[0]) & (y_pred == pos_label[0])).sum() / (y_ans  == pos_label[0]).sum())
@@ -718,6 +949,7 @@ def eval_regressor_model(df, name_answer: str, name_predict: str, n_round: int=3
         eval_cm_bin: 回帰を分類のように扱って性能を得るときに使用
                      {1:[0,100]} のような形式で格納されており、list内の範囲(0-100)をkey(1)で置き換える
     """
+    logger.info("START")
     se_eval = pd.Series()
     df   = df.copy()
     y_ans  = df[name_answer].values
@@ -766,6 +998,7 @@ def conv_validdata_in_fitparmas(fit_params, validation_x, validation_y):
     """
     fit_params 内の _validation_x, _validation_y を置き換える
     """
+    logger.info("START")
     ret_fit_params = fit_params.copy()
     # "_validation_x", "_validation_y" を validation_x, validation_y に変換する
     for _x in fit_params.keys():
@@ -775,18 +1008,35 @@ def conv_validdata_in_fitparmas(fit_params, validation_x, validation_y):
                 ret_fit_params[_x] = validation_x
             elif (fit_params.get(_x) == "_validation_y"):
                 ret_fit_params[_x] = validation_y
-        elif type(fit_params.get(_x)) in [tuple, list] :
+        elif type(fit_params.get(_x)) in [tuple, list]:
+            ## list の list まで想定する
             ## tupleの場合は中身を上書きできないので、別で用意して詰め込む
-            ## 受け取り手(model.fit())がlistの場合もtupleで渡してみる(それでエラーが発生するケースはないはず)
             _tuple = []
-            for _i, _y in enumerate(fit_params.get(_x)):
-                _tuple.append(None) #ひとまず空でつめる
-                if   (type(_y) == str) and (_y == "_validation_x"):
-                    _tuple[_i] = validation_x
-                elif (type(_y) == str) and (_y == "_validation_y"):
-                    _tuple[_i] = validation_y
-            # _validation_x などは置き換えた値で埋めて、それ以外は元の値で埋める
-            ret_fit_params[_x] = tuple(fit_params.get(_x)[_i] if _y is None else _y for _i, _y in enumerate(_tuple))
+            for _y in fit_params.get(_x):
+                _tuple.append(None) #ひとまず空でつめる.
+                if type(_y) == str:
+                    if   _y == "_validation_x":
+                        _tuple[-1] = validation_x
+                    elif _y == "_validation_y":
+                        _tuple[-1] = validation_y
+                    else:
+                        _tuple[-1] = _y
+                elif type(_y) in [tuple, list]:
+                    _tuplewk = []
+                    for _z in _y:
+                        _tuplewk.append(None)
+                        if   type(_z) == str and _z == "_validation_x":
+                            _tuplewk[-1] = validation_x
+                        elif type(_z) == str and _z == "_validation_y":
+                            _tuplewk[-1] = validation_y
+                        else:
+                            _tuplewk[-1] = _z
+                    _tuple[-1] = tuple(_tuplewk) if type(_y) == tuple else _tuplewk
+                else:
+                    _tuple[-1] = _y
+            ret_fit_params[_x] = _tuple
+    logger.info(f'fit_params after this process:\n{ret_fit_params}')
+    logger.info("END")
     return ret_fit_params
 
 
@@ -995,16 +1245,18 @@ def binary_cross_entropy(x: np.ndarray, t: np.ndarray):
     x = sigmoid(x)
     return -1 * (t * np.log(x) + (1 - t) * np.log(1 - x))
 
-def multi_cross_entropy(x: np.ndarray, t: np.ndarray):
+def multi_cross_entropy(x: np.ndarray, t: np.ndarray, is_standardize=False):
     t = t.astype(np.int32)
     if len(x.shape) > 1:
-        x = softmax(x) # softmax で確率化
+        if is_standardize:
+            x = softmax(x) # softmax で確率化
         t = np.identity(x.shape[1])[t]
-        return -1 * t * np.log(x)
+        return -1 * t * np.log(np.clip(x, 1e-10, 1))
     else:
-        x = sigmoid(x)
+        if is_standardize:
+            x = sigmoid(x)
         x[t == 0] = 1 - x[t == 0] # 0ラベル箇所は確率を反転する
-        return -1 * np.log(x)
+        return -1 * np.log(np.clip(x, 1e-10, 1))
 
 def focal_loss(x: np.ndarray, t: np.ndarray, gamma: float=1) -> np.ndarray:
     """

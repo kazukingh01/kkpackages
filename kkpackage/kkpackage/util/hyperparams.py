@@ -1,7 +1,9 @@
 from functools import partial
+import os, json
 import numpy as np
 import pandas as pd
 import optuna
+import sqlite3
 # local package
 from kkpackage.util.learning import evalate, split_data_balance, conv_validdata_in_fitparmas, is_classification_model
 from kkpackage.util.common import is_callable
@@ -130,18 +132,18 @@ def search_hyperparams_by_optuna(
                 "boosting_type"    :["category","gbdt","dart"], #"goss"
                 "num_leaves"       :["int",10,1500],
                 "max_depth"        :["const",-1],
-                "learning_rate"    :["const",0.5], 
+                "learning_rate"    :["const",0.03], 
                 "n_estimators"     :["const", 5000], 
                 "subsample_for_bin":["const", 200000], 
                 ## 必要に応じて変更する ‘binary’ or ‘multiclass'
                 "objective"        :["const",("binary" if bool_class_binary==True else "multiclass")], 
                 "class_weight"     :["const", "balanced"], 
-                "min_child_weight" :["category"] + [0.01 * (2**i) for i in range(18)], 
+                "min_child_weight" :["category"] + [0.01 * (2**i) for i in range(23)], 
                 "min_child_samples":["int",1,1000], 
-                "subsample"        :["step", 0.01, 0.99, 0.01], 
-                "colsample_bytree" :["step", 0.01, 0.99, 0.01], 
+                "subsample"        :["step", 0.01,  0.99,  0.01], 
+                "colsample_bytree" :["step", 0.001, 0.99, 0.001], 
                 "reg_alpha"        :["const", 0],
-                "reg_lambda"       :["category", 0] + [0.01 * (2**i) for i in range(18)],
+                "reg_lambda"       :["category", 0] + [0.01 * (2**i) for i in range(23)],
                 "random_state"     :["const",1], 
                 "n_jobs"           :["const", n_jobs] 
             }
@@ -255,3 +257,56 @@ def search_hyperparams_by_optuna(
 
     logger.info("END")
     return df_optuna, dict_param_ret
+
+
+def get_optuna_study_from_db(dbpath: str) -> pd.DataFrame:
+    """
+    optuna で保存された sqlite db からstudyした情報を一覧取得する
+    Params::
+        dbpath: db の path
+    """
+    logger.info("START")
+    if not os.path.exists(dbpath):
+        logger.raise_error(f'{dbpath} is not exists.')
+    conn = sqlite3.connect(dbpath)
+    df   = pd.read_sql_query("SELECT trial_id, value FROM trials WHERE state = 'COMPLETE'", conn)
+    """
+    >>> df
+        trial_id  number  study_id     state         value              datetime_start           datetime_complete
+    0           1       0         1  COMPLETE  11844.585332  2020-10-14 21:39:02.074181  2020-10-14 21:40:19.688830
+    1           2       1         1  COMPLETE  13209.351599  2020-10-14 21:40:19.715214  2020-10-14 21:40:40.969562
+    ..        ...     ...       ...       ...           ...                         ...                         ...
+    678       679     678         1  COMPLETE  13726.561050  2020-10-15 08:57:42.013133  2020-10-15 08:57:46.098881
+    679       680     679         1  COMPLETE  13032.502238  2020-10-15 08:57:46.122198  2020-10-15 08:57:50.876729
+
+    """
+    dfwk = pd.read_sql_query('SELECT * FROM trial_params', conn)
+    """
+    >>> dfwk
+        param_id  trial_id         param_name  param_value                                  distribution_json
+    0            1         1   min_child_weight         0.00  {"name": "CategoricalDistribution", "attribute...
+    1            2         1  min_child_samples       779.00  {"name": "IntUniformDistribution", "attributes...
+    ...        ...       ...                ...          ...                                                ...
+    3398      3399       680   colsample_bytree         0.01  {"name": "DiscreteUniformDistribution", "attri...
+    3399      3400       680         reg_lambda        10.00  {"name": "CategoricalDistribution", "attribute...
+
+    """
+    conn.close()
+    params = {}
+    for name, dictwk in dfwk.groupby("param_name").first().reset_index()[["param_name", "distribution_json"]].values:
+        params[name] = None
+        dictwk = json.loads(dictwk)
+        if dictwk["name"] == "CategoricalDistribution":
+            dictwkwk = {}
+            for i, x in enumerate(dictwk["attributes"]["choices"]):
+                dictwkwk[i] = x
+            params[name] = dictwkwk
+    dfwk = dfwk.pivot_table(values="param_value", index="trial_id", columns="param_name", aggfunc="first").reset_index()
+    for x, y in params.items():
+        if y is not None:
+            dfwk[x] = dfwk[x].astype(int).map(y)
+    df = pd.merge(df, dfwk, how="left", on="trial_id")
+    df = df.sort_values("value")
+    logger.info("END")
+    return df
+

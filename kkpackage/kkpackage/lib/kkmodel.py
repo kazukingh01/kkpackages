@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 import optuna
-
+from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.decomposition import PCA
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 from sklearn.metrics import roc_curve, auc
@@ -45,9 +45,12 @@ class MyModel:
         self.colname_explain_hist  = []
         self.colname_answer        = colname_answer
         self.colname_other         = conv_ndarray(colname_other) if colname_other is not None else np.array([])
+        self.df_correlation                     = pd.DataFrame()
         self.df_feature_importances             = pd.DataFrame()
         self.df_feature_importances_randomtrees = pd.DataFrame()
         self.df_feature_importances_modeling    = pd.DataFrame()
+        self.df_adversarial_valid               = pd.DataFrame()
+        self.df_adversarial_importances         = pd.DataFrame()
         self.model          = model
         self.is_model_fit   = False
         self.optuna         = None
@@ -109,7 +112,7 @@ class MyModel:
         return is_classification_model(self.model)
     
 
-    def update_features(self, cut_features: np.array, alive_features: np.array=None):
+    def update_features(self, cut_features: np.ndarray, alive_features: np.ndarray=None):
         self.logger.info("START")
         self.colname_explain_hist.append(self.colname_explain.copy())
         if alive_features is None:
@@ -140,7 +143,7 @@ class MyModel:
         self.logger.info("END")
 
 
-    def cut_features_by_correlation(self, df, cutoff=0.9, ignore_nan_mode=0, on_gpu_size=1, min_n_nan=10):
+    def cut_features_by_correlation(self, df, cutoff=0.9, ignore_nan_mode=0, n_div_col=1, on_gpu_size=1, min_n_not_nan=10):
         """
         相関係数の高い値の特徴量をカットする
         ※欠損無視(ignore_nan=True)しての計算は計算量が多くなるので注意
@@ -156,33 +159,52 @@ class MyModel:
         self.logger.info("START")
         self.logger.info(f"df shape:{df.shape}, cutoff:{cutoff}, ignore_nan_mode:{ignore_nan_mode}")
         self.logger.info(f"features:{self.colname_explain.shape}")
-        df_corr, _ = search_features_by_correlation(df[self.colname_explain], cutoff=cutoff, ignore_nan_mode=ignore_nan_mode, on_gpu_size=on_gpu_size, min_n_nan=min_n_nan, n_jobs=self.n_jobs)
-        self.correlation = df_corr.copy()
+        df_corr, _ = search_features_by_correlation(
+            df[self.colname_explain], cutoff=cutoff, ignore_nan_mode=ignore_nan_mode, 
+            n_div_col=n_div_col, on_gpu_size=on_gpu_size, min_n_not_nan=min_n_not_nan, n_jobs=self.n_jobs
+        )
+        self.df_correlation = df_corr.copy()
         alive_features, cut_features = self.features_by_correlation(cutoff)
         self.update_features(cut_features, alive_features=alive_features) # 特徴量の更新
         self.logger.info("END")
 
 
-    def cut_features_by_random_tree_importance(self, df: pd.DataFrame, cut_ratio: float, calc_randomtrees: bool=False, **kwargs):
+    def cut_features_by_random_tree_importance(self, df: pd.DataFrame=None, cut_ratio: float=0, sort: bool=True, calc_randomtrees: bool=False, **kwargs):
         self.logger.info("START")
         self.logger.info("cut_ratio:%s", cut_ratio)
         if self.model is None:
             self.logger.raise_error("model is not set !!")
         if calc_randomtrees:
+            if df is None: self.logger.raise_error("dataframe is None !!")
             self.df_feature_importances_randomtrees = calc_randomtree_importance(
                 df, colname_explain=self.colname_explain, colname_answer=self.colname_answer, 
                 is_cls_model=self.is_classification_model(), n_jobs=self.n_jobs, **kwargs
             )
-        alive_features, cut_features = self.features_by_random_tree_importance(cut_ratio)
-        self.update_features(cut_features, alive_features=alive_features) # 特徴量の更新
+        if sort:
+            self.logger.info("sort features by randomtree importance.")
+            self.colname_explain_hist.append(self.colname_explain.copy())
+            self.colname_explain = self.df_feature_importances_randomtrees["feature_name"].values.copy()
+        if cut_ratio > 0:
+            self.logger.info(f"cut features by randomtree importance. cut_ratio: {cut_ratio}")
+            alive_features, cut_features = self.features_by_random_tree_importance(cut_ratio)
+            self.update_features(cut_features, alive_features=alive_features) # 特徴量の更新
         self.logger.info("END")
 
 
     def features_by_correlation(self, cutoff: float) -> (np.ndarray, np.ndarray):
         self.logger.info("START")
-        columns = self.correlation.columns.values.copy()
-        alive_features = columns[(((self.correlation > cutoff) | (self.correlation < -1*cutoff)).sum(axis=0) == 0)].copy()
+        columns = self.df_correlation.columns.values.copy()
+        alive_features = columns[(((self.df_correlation > cutoff) | (self.df_correlation < -1*cutoff)).sum(axis=0) == 0)].copy()
         cut_list       = columns[~np.isin(columns, alive_features)]
+        self.logger.info("END")
+        return alive_features, cut_list
+
+
+    def features_by_adversarial_validation(self, cutoff: float) -> (np.ndarray, np.ndarray):
+        self.logger.info("START")
+        columns = self.df_adversarial_importances["feature_name"].values.copy()
+        cut_list       = columns[(self.df_adversarial_importances["importance"] > cutoff).values]
+        alive_features = columns[~np.isin(columns, cut_list)]
         self.logger.info("END")
         return alive_features, cut_list
 
@@ -463,6 +485,70 @@ class MyModel:
         logger.info(f"{self.model}")
         self.fit(df_train, split_params=split_params, fit_params=fit_params_train, eval_params=eval_params, pred_params=pred_params)
 
+        self.logger.info("END")
+    
+
+    def adversarial_validation(
+            self, df_train: pd.DataFrame, df_test: pd.DataFrame, 
+            model=None, n_splits: int=5, n_estimators: int=1000
+        ):
+        """
+        adversarial validation. テストデータのラベルを判別するための交差顕彰
+        testdataかどうかを判別しやすい特徴を省いたり、test dataの分布に近いデータを選択する事に使用する
+        Params::
+            df_train: train data
+            df_test: test data
+            model: 分類モデルのインスタンス
+            n_splits: 何分割交差顕彰を行うか
+        """
+        self.logger.info("START")
+        self.logger.info(f'df_train shape: {df_train.shape}, df_test shape: {df_test.shape}')
+        self.logger.info(f"features: {self.colname_explain.shape}, answer: {self.colname_answer}")
+        if model is None: model = ExtraTreesClassifier(n_estimators=n_estimators, n_jobs=self.n_jobs)
+        self.logger.info(f'model: \n{model}')
+        # numpyに変換(前処理の結果を反映する
+        X_train, Y_train = self.preproc(df_train, autofix=True)
+        X_test,  Y_test  = self.preproc(df_test,  autofix=True)
+        # データをくっつける(正解ラベルも使う)
+        X_train = np.concatenate([X_train, Y_train.reshape(-1).reshape(-1, 1)], axis=1).astype(X_train.dtype) #X_trainの型でCASTする
+        X_test  = np.concatenate([X_test,  Y_test .reshape(-1).reshape(-1, 1)], axis=1).astype(X_test.dtype ) #X_test の型でCASTする
+        X_train = np.concatenate([X_train, X_test], axis=0).astype(X_train.dtype) # 連結する
+        Y_train = np.concatenate([np.zeros(Y_train.reshape(-1).shape[0]), np.ones(Y_test.reshape(-1).shape[0])], axis=0).astype(np.int32)
+        ## データのスプリット.(under samplingにしておく)
+        train_indexes, test_indexes = split_data_balance(Y_train, n_splits=n_splits, y_type="cls", weight="balance", is_bootstrap=False, random_seed=self.random_seed)
+
+        # 交差検証開始
+        i_split = 1
+        df_score, df_importance = pd.DataFrame(), pd.DataFrame()
+        for train_index, test_index in zip(train_indexes, test_indexes):
+            self.logger.info(f"create model by split samples, Cross Validation : {i_split} start...")
+            _X_train = X_train[train_index]
+            _Y_train = Y_train[train_index]
+            _X_test  = X_train[test_index]
+            _Y_test  = Y_train[test_index]
+            model.fit(_X_train, _Y_train)
+            self.logger.info("create model by split samples, Cross Validation : %s end...", i_split)
+            # 結果の格納
+            dfwk = predict_detail(model, _X_test)
+            dfwk["answer"] = _Y_test
+            dfwk["index"]  = test_index # concat前のtrain dataのindexは意味ある
+            dfwk["type"]    = "test"
+            dfwk["i_split"] = i_split
+            df_score = pd.concat([df_score, dfwk], axis=0, ignore_index=True, sort=False)
+            i_split += 1
+            # 特徴量の重要度
+            if is_callable(model, "feature_importances_") == True:
+                _df = pd.DataFrame(np.array([self.colname_explain.tolist() + [self.colname_answer], model.feature_importances_]).T, columns=["feature_name","importance"])
+                _df = _df.sort_values(by="importance", ascending=False).reset_index(drop=True)
+                df_importance = pd.concat([df_importance, _df.copy()], axis=0, ignore_index=True, sort=False)
+        df_score["index_df"] = -1
+        df_score.loc[(df_score["answer"] == 0), "index_df"] = df_train.index[df_score.loc[(df_score["answer"] == 0), "index"].values]
+        df_score.loc[(df_score["answer"] == 1), "index_df"] = df_test .index[df_score.loc[(df_score["answer"] == 1), "index"].values - df_train.shape[0]]
+        self.logger.info(f'{eval_classification_model(df_score, "answer", "predict", ["predict_proba_0", "predict_proba_1"])}')
+        self.df_adversarial_valid = df_score.copy()
+        if df_importance.shape[0] > 0:
+            df_importance["importance"] = df_importance["importance"].astype(float)
+            self.df_adversarial_importances = df_importance.groupby("feature_name")["importance"].mean().reset_index().sort_values("importance", ascending=False)
         self.logger.info("END")
 
 

@@ -147,6 +147,7 @@ class ProcRegistry(object):
         logger.info("END")
 
 
+
 class MyMinMaxScaler(MinMaxScaler):
     def __call__(self, ndf: np.ndarray):
         return self.transform(ndf)
@@ -192,6 +193,37 @@ class MyFillNa(object):
         else:
             # self.fill_value の値で埋める
             pass
+
+class MyFillNaRandom(object):
+    def __init__(self, bins: int=100):
+        self.bins = bins
+        self.hist = []
+    def __call__(self, ndf: np.ndarray):
+        is_nan = np.isnan(ndf)
+        n_nan  = is_nan.sum(axis=0)
+        for i, (dens, bins) in enumerate(self.hist):
+            if n_nan[i] == 0: continue
+            choice = np.random.choice(bins, n_nan[i], p=dens)
+            ndf[is_nan[:, i], i] = choice
+    def fit(self, ndf: np.ndarray):
+        self.hist = [np.histogram(ndf[:, i], bins=self.bins) for i in np.arange(ndf.shape[1])]
+        self.hist = [(np.array([bins[j:j+2].mean() for j in np.arange(self.bins)]), (dens / dens.sum())) for dens, bins in self.hist]
+
+class MyFillNaMinMax(object):
+    def __init__(self, add_value: float=1):
+        self.add_value  = add_value
+        self.min = np.zeros(0)
+        self.max = np.zeros(0)
+    def __call__(self, ndf: np.ndarray):
+        is_nan = np.isnan(ndf)
+        n_nan  = is_nan.sum(axis=0)
+        for i, (_min, _max) in enumerate(zip(self.min, self.max)):
+            if n_nan[i] == 0: continue
+            choice = np.random.choice([_min, _max], n_nan[i])
+            ndf[is_nan[:, i], i] = choice
+    def fit(self, ndf: np.ndarray):
+        self.min = np.nanmin(ndf, axis=0) - self.add_value
+        self.max = np.nanmax(ndf, axis=0) + self.add_value
 
 class MyReplaceValue:
     def __init__(self, target_value: object, replace_value: object):
