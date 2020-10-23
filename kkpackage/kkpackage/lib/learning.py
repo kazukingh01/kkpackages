@@ -80,6 +80,7 @@ class ProcRegistry(object):
             if self.processing[name]["type"] not in ["row"]: continue
             logger.info(f'name: {name}, type: {self.processing[name]["type"]}')
             for _proc in self.processing[name]["proc"]:
+                logger.info(f'proc: {_proc}')
                 logger.info(f"before shape: {df.shape}")
                 df = _proc(df)
                 logger.info(f"after  shape: {df.shape}")
@@ -210,13 +211,13 @@ class MyFillNaRandom(object):
     def __call__(self, ndf: np.ndarray):
         is_nan = np.isnan(ndf)
         n_nan  = is_nan.sum(axis=0)
-        for i, (dens, bins) in enumerate(self.hist):
+        for i, (bins, dens) in enumerate(self.hist):
             if n_nan[i] == 0: continue
             choice = np.random.choice(bins, n_nan[i], p=dens)
             ndf[is_nan[:, i], i] = choice
         return ndf
     def fit(self, ndf: np.ndarray):
-        self.hist = [np.histogram(ndf[:, i], bins=self.bins) for i in np.arange(ndf.shape[1])]
+        self.hist = [np.histogram(ndf[:, i][~np.isnan(ndf[:, i])], bins=self.bins) for i in np.arange(ndf.shape[1])]
         self.hist = [(np.array([bins[j:j+2].mean() for j in np.arange(self.bins)]), (dens / dens.sum())) for dens, bins in self.hist]
 
 class MyFillNaMinMax(object):
@@ -286,14 +287,37 @@ class MyReshape:
         return ndf
 
 class MyDropNa:
-    def __init__(self, colname: str):
-        self.colname = colname
+    def __init__(self, columns: np.ndarray):
+        self.columns = columns
     def __str__(self):
-        return f'{self.__class__.__name__}(colname: {self.colname})'
+        return f'{self.__class__.__name__}(columns: {self.columns})'
     def __call__(self, df: pd.DataFrame):
-        return df.loc[~df[self.colname].isna(), :]
+        boolwk = np.zeros(df.shape[0]).astype(bool)
+        for x in self.columns:
+            boolwk = (boolwk | df[x].isna().values)
+        return df.loc[~boolwk, :]
 
-
+class MyCondition:
+    def __init__(self, colname: str, condition: str, value: object):
+        if not isinstance(colname, str): logger.raise_error(f'colname: {colname} is not string.')
+        if condition not in [">", "<", "=", ">=", "<="]: logger.raise_error(f'condition: {condition} is not expected value.')
+        self.colname   = colname
+        self.condition = condition
+        self.value     = value
+    def __str__(self):
+        return f'{self.__class__.__name__}(colname: {self.colname}, condition: {self.condition}, value: {self.value})'
+    def __call__(self, df: pd.DataFrame):
+        if   self.condition == "=":
+            df = df[df[self.colname] == self.value]
+        elif self.condition == ">":
+            df = df[df[self.colname] >  self.value]
+        elif self.condition == ">=":
+            df = df[df[self.colname] >= self.value]
+        elif self.condition == "<":
+            df = df[df[self.colname] <  self.value]
+        elif self.condition == "<=":
+            df = df[df[self.colname] <= self.value]
+        return df
 
 class Calibrater:
     """

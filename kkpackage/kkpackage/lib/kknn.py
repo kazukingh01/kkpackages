@@ -1,9 +1,13 @@
 import datetime
-from typing import List
+from typing import List, Tuple
 from collections import namedtuple
+from functools import partial
+import numpy as np
 import torch
 from torch import nn
+from torch.optim.optimizer import Optimizer
 from torch.utils.tensorboard import SummaryWriter
+import torch_optimizer as optim
 # local package
 from kkpackage.util.common import is_callable, correct_dirpath, makedirs
 from kkpackage.util.logger import set_loglevel, set_logger
@@ -12,7 +16,6 @@ logger = set_logger(__name__)
 
 Layer = namedtuple("Layer", ("name", "module", "node", "calc_type", "params", "kwards"))
 class TorchNN(nn.Module):
-
     def __init__(self, in_size: int, *layers: List[Layer]):
         """
         Params::
@@ -145,78 +148,97 @@ class TorchNN(nn.Module):
         return output
 
 
-    def set_weight(self, weight: float):
+    def reset_parameters(self, weight: float=None):
+        """
+        Params::
+            weight: float or str. string で "random" の場合は reset_parameters() を呼び出す
+        """
         # 重みの初期化
         for name, _ in self.named_modules():
             if name != "":
-                try:
-                    self.__getattr__(name).weight.data.fill_(weight)
-                except AttributeError:
-                    pass
-                try:
-                    self.__getattr__(name).bias.data.fill_(weight)
-                except AttributeError:
-                    pass
+                if weight is None:
+                    try:
+                        self.__getattr__(name).reset_parameters()
+                    except AttributeError:
+                        pass
+                else:
+                    try:
+                        self.__getattr__(name).weight.data.fill_(weight)
+                    except AttributeError:
+                        pass
+                    try:
+                        self.__getattr__(name).bias.data.fill_(weight)
+                    except AttributeError:
+                        pass
 
+
+class EarlyStoppingError(Exception):
+    """early stopping の条件を達成した時に発生する例外"""
+    pass
 
 
 class BaseNN:
     def __init__(
         self,
         # network
-        mynn: nn.Module, 
-        # train dataset
-        dataset_train: torch.utils.data.Dataset,
-        # train dataloader
-        num_workers: int=1, batch_size: int=2, 
-        # validation dataset
-        dataset_valids: List[torch.utils.data.Dataset]=[],
-        # validation dataloader
-        valid_step: int=None, batch_size_valid: int=2, 
+        mynn: nn.Module,
+        # loss functions
+        loss_funcs: List[object],
         # optimizer
-        lr: float=0.001, epoch: int=100, 
+        optimizer: Optimizer=optim.RAdam, optim_dict: dict={"lr":0.001, "weight_decay":0},
+        # train dataloader
+        dataloader_train: torch.utils.data.DataLoader=None,
+        # validation dataset
+        dataloader_valids: List[torch.utils.data.DataLoader]=[],
+        # train parameter
+        epoch: int=100, batch_size: int=-1, valid_step: int=-1, early_stopping_rounds: int=-1, 
         # output
-        outdir: str="./output_"+datetime.datetime.now().strftime("%Y%m%d%H%M%S"), save_step: int=50
+        outdir: str="./output_"+datetime.datetime.now().strftime("%Y%m%d%H%M%S"), save_step: int=None
     ):
+        """
+        Params::
+            mynn: PyTorch形式でのNN
+            loss_funcs: list形式での callable な loss function
+            optimizer: Optimizer を継承した class を set. init で
+            dataloader_train: DataLoader形式. 画像系の場合は DataLoader使う
+            dataloader_valids: DataLoader形式のList
+        """
         # NN
         self.mynn = mynn
-        # optimizer
-        self.optimizer = nn.optim.RAdam(self.mynn.parameters(), lr=lr, weight_decay=0)
-        # DataLoader
-        self.dataloader_train = torch.utils.data.DataLoader(
-            dataset_train, batch_size=batch_size, shuffle=True, num_workers=num_workers, 
-            drop_last=True, collate_fn=self.collate_fn
-        )
-        self.dataloader_valids = []
-        for dataset_valid in dataset_valids:
-            self.dataloader_valids.append(
-                torch.utils.data.DataLoader(
-                    dataset_valid, batch_size=batch_size_valid, shuffle=True, num_workers=num_workers, 
-                    drop_last=True, collate_fn=partial(self.collate_fn, is_train=False)
-                )
-            )
-        # Process
-        self.process_data_train_pre = []
-        self.process_data_train_aft = []
-        self.process_data_valid_pre = []
-        self.process_data_valid_aft = []
-        self.process_label          = []
         # Loss
-        self.loss_funcs = []
+        self.loss_funcs = loss_funcs
+        # Optimizer
+        self.optimizer = optimizer(self.mynn.parameters(), **optim_dict)
+        # DataLoader
+        self.dataloader_train  = dataloader_train
+        self.dataloader_valids = dataloader_valids
+        # training
+        self.batch_size = batch_size
         # validation
         self.valid_step = valid_step
+        self.early_stopping_rounds = early_stopping_rounds
         # Config
-        self.is_cuda  = False
-        self.epoch    = epoch
+        self.is_cuda   = False
+        self.epoch     = epoch
         # Other
-        self.iter     = 0
-        self.min_loss = float("inf")
+        self.iter      = 0
+        self.iter_best = self.epoch
+        self.min_loss  = float("inf")
+        self.early_stopping_iter = 0
         self.best_params = {}
         self.outdir = correct_dirpath(outdir)
         makedirs(self.outdir, exist_ok=True, remake=True)
         self.save_step = save_step
         # TensorBoard
         self.writer = SummaryWriter(log_dir=self.outdir + "logs")
+
+    def initialize(self):
+        self.iter      = 0
+        self.iter_best = self.epoch
+        self.min_loss  = float("inf")
+        self.early_stopping_iter = 0
+        self.best_params = {}
+        self.mynn.reset_parameters()
 
     def to_cuda(self):
         """ GPUの使用をONにする """
@@ -227,26 +249,14 @@ class BaseNN:
         """ GPUの使用がONであればGPUに乗せる """
         return x.to(torch.device("cuda:0")) if self.is_cuda else x
 
-    @classmethod
-    def collate_fn(cls, batch, is_train: bool=True) -> (List[object], List[object], ):
-        """
-        以下のように実装する
-        Usage::
-            images, labels = [], []
-            for image, label in batch:
-                images.append(image)
-                labels.append(label)
-            return images, labels
-        """
-        raise NotImplementedError()
-
     def save(self, filename: str=None, is_best: bool=False):
         if is_best:
             if len(self.best_params) > 0:
                 torch.save(self.best_params["params"], self.outdir + filename + f'.{self.best_params["iter"]}' \
                 if filename is not None else self.outdir + f'model_best_{self.best_params["iter"]}.pth')
             else:
-                logger.raise_error("self.best_params is nothing.")
+                logger.warning("self.best_params is nothing.")
+                torch.save(self.mynn.state_dict(), self.outdir + filename + f".{self.iter}" if filename is not None else self.outdir + f"model_{self.iter}.pth")
         else:
             torch.save(self.mynn.state_dict(), self.outdir + filename + f".{self.iter}" if filename is not None else self.outdir + f"model_{self.iter}.pth")
     
@@ -254,83 +264,144 @@ class BaseNN:
         self.mynn.load_state_dict(torch.load(model_path))
         self.mynn.eval()
     
-    def predict(self, _input):
-        self.mynn.eval()
-        with torch.no_grad():
+    @classmethod
+    def process_data_train_pre(cls, _input): return _input
+    @classmethod
+    def process_data_train_aft(cls, _input): return _input
+    @classmethod
+    def process_data_valid_pre(cls, _input): return _input
+    @classmethod
+    def process_data_valid_aft(cls, _input): return _input
+    @classmethod
+    def process_label(cls, _input): return _input
+
+    def processes(self, _input, label=None, is_valid: bool=False):
+        output = None
+        if is_valid:
             # pre proc
-            for _proc in self.process_data_train_pre:
-                _input = _proc(_input)
-            output = self.val_to(_input)
+            output = self.process_data_valid_pre(_input)
+            output = self.val_to(output)
             output = self.mynn(output)
             # after proc
-            for _proc in self.process_data_train_aft:
-                output = _proc(output)
-        return output
+            output = self.process_data_valid_aft(output)
+        else:
+            # pre proc
+            output = self.process_data_train_pre(_input)
+            output = self.val_to(output)
+            output = self.mynn(output)
+            # after proc
+            output = self.process_data_train_aft(output)
+        # label proc
+        if label is not None:
+            label  = self.process_label(label)
+            label  = self.val_to(label)
+        return output, label
     
-    def train(self):
+    def _train(self, _input, label):
         self.mynn.train() # train() と eval() は Dropout があるときに区別する必要がある
-        for _ in range(self.epoch):
-            for _input, label in self.dataloader_train:
-                self.iter += 1
-                self.mynn.zero_grad() # 勾配を初期化
-                # pre proc
-                for _proc in self.process_data_train_pre: _input = _proc(_input)
-                for _proc in self.process_label:          label  = _proc(label)
-                label  = self.val_to(label)
-                output = self.val_to(_input)
-                output = self.mynn(output)
-                # after proc
-                for _proc in self.process_data_train_aft: output = _proc(output)
-                print((output > 0.5).sum())
-                # loss calculation
-                loss, losses = 0, []
-                for loss_func in self.loss_funcs:
-                    losses.append(loss_func(output, label))
-                    loss += losses[-1]
-                loss.backward()
-                self.optimizer.step()
-                loss   = float(loss.to("cpu").detach().item())
-                losses = [float(_x.to("cpu").detach().item()) for _x in losses]
-                logger.info(f'iter: {self.iter}, train: {loss}, loss: {losses}')
-                # tensor board
-                self.writer.add_scalar("train/total_loss", loss, self.iter)
-                for i_loss, _loss in enumerate(losses): self.writer.add_scalar(f"train/loss_{i_loss}", _loss, self.iter)
-                # save
-                if self.iter % self.save_step == 0:
-                    self.save()
-                # validation
-                if len(self.dataloader_valids) > 0 and self.valid_step is not None and self.iter % self.valid_step == 0:
-                    self.mynn.eval()
-                    with torch.no_grad():
-                        for i_valid, dataloader_valid in enumerate(self.dataloader_valids):
-                            _input, label = next(iter(dataloader_valid))
-                            # pre proc
-                            for _proc in self.process_data_valid_pre: _input = _proc(_input)
-                            for _proc in self.process_label:          label  = _proc(label)
-                            label  = self.val_to(label)
-                            output = self.val_to(_input)
-                            output = self.mynn(output)
-                            # after proc
-                            for _proc in self.process_data_valid_aft: output = _proc(output)
-                            # loss calculation
-                            loss_valid, losses_valid = 0, []
-                            for loss_func in self.loss_funcs:
-                                losses_valid.append(loss_func(output, label))
-                                loss_valid += losses_valid[-1]
-                            loss_valid   = float(loss_valid.to("cpu").detach().item())
-                            losses_valid = [float(_x.to("cpu").detach().item()) for _x in losses_valid]
-                            logger.info(f'iter: {self.iter}, valid: {loss_valid}, loss: {losses_valid}')
-                            # tensor board
-                            self.writer.add_scalar(f"validation{i_valid}/total_loss", loss_valid, self.iter)
-                            for i_loss, _loss in enumerate(losses_valid): self.writer.add_scalar(f"validation{i_valid}/loss_{i_loss}", _loss, self.iter)
-                            if i_valid == 0 and self.min_loss > loss:
-                                self.min_loss = loss
-                                self.best_params = {
-                                    "iter": self.iter,
-                                    "loss_train": loss,
-                                    "loss_valid": loss_valid,
-                                    "params": self.mynn.state_dict().copy()
-                                }
-                    self.mynn.train()
+        self.mynn.zero_grad() # 勾配を初期化
+        self.iter += 1
+        output, label = self.processes(_input, label=label, is_valid=False)
+        # loss calculation
+        loss, losses = 0, []
+        for loss_func in self.loss_funcs:
+            losses.append(loss_func(output, label))
+            loss += losses[-1]
+        loss.backward()
+        self.optimizer.step()
+        loss   = float(loss.to("cpu").detach().item())
+        losses = [float(_x.to("cpu").detach().item()) for _x in losses]
+        logger.info(f'iter: {self.iter}, train: {loss}, loss: {losses}')
+        # tensor board
+        self.writer.add_scalar("train/total_loss", loss, self.iter)
+        for i_loss, _loss in enumerate(losses): self.writer.add_scalar(f"train/loss_{i_loss}", _loss, self.iter)
+        # save
+        if self.save_step is not None and self.save_step > 0 and self.iter % self.save_step == 0:
+            self.save()
+
+    def _valid(self, _input, label, i_valid: int=0):
+        self.mynn.eval()
+        with torch.no_grad():
+            output, label = self.processes(_input, label=label, is_valid=True)
+            # loss calculation
+            loss_valid, losses_valid = 0, []
+            for loss_func in self.loss_funcs:
+                losses_valid.append(loss_func(output, label))
+                loss_valid += losses_valid[-1]
+            loss_valid   = float(loss_valid.to("cpu").detach().item())
+            losses_valid = [float(_x.to("cpu").detach().item()) for _x in losses_valid]
+            logger.info(f'iter: {self.iter}, valid: {loss_valid}, loss: {losses_valid}')
+            # tensor board
+            self.writer.add_scalar(f"validation{i_valid}/total_loss", loss_valid, self.iter)
+            for i_loss, _loss in enumerate(losses_valid): self.writer.add_scalar(f"validation{i_valid}/loss_{i_loss}", _loss, self.iter)
+            self.early_stopping_iter += 1
+            if i_valid == 0 and self.min_loss > loss_valid:
+                self.min_loss = loss_valid
+                self.early_stopping_iter = 0 # iteration を reset
+                self.best_params = {
+                    "iter": self.iter,
+                    "loss_valid": loss_valid,
+                    "params": self.mynn.state_dict().copy()
+                }
+            if isinstance(self.early_stopping_rounds, int) and self.early_stopping_rounds > 0 and self.early_stopping_iter >= self.early_stopping_rounds:
+                # early stopping
+                raise EarlyStoppingError
+    
+    def fit(self, x_train: np.ndarray, y_train: np.ndarray, x_valid: Tuple[np.ndarray]=None, y_valid: Tuple[np.ndarray]=None):
+        self.initialize()
+        indexes = np.arange(x_train.shape[0])
+        x_train = self.val_to(torch.from_numpy(x_train))
+        y_train = self.val_to(torch.from_numpy(y_train))
+        if x_valid is not None:
+            if isinstance(x_valid, np.ndarray):
+                x_valid = [self.val_to(torch.from_numpy(x_valid))]
+                y_valid = [self.val_to(torch.from_numpy(y_valid))]
+            elif isinstance(x_valid, list) or isinstance(x_valid, tuple):
+                x_valid = [self.val_to(torch.from_numpy(_ndf)) for _ndf in x_valid]
+                y_valid = [self.val_to(torch.from_numpy(_ndf)) for _ndf in y_valid]
+        try:
+            for _ in range(self.epoch):
+                _index = np.random.permutation(indexes)[:x_train.shape[0] if self.batch_size <= 0 else self.batch_size]
+                self._train(x_train[_index], y_train[_index])
+                if x_valid is not None and self.valid_step is not None and self.valid_step > 0 and self.iter % self.valid_step == 0:
+                    for i, (_x_valid, _y_valid) in enumerate(zip(x_valid, y_valid)):
+                        self._valid(_x_valid, _y_valid, i_valid=i)
+        except EarlyStoppingError:
+            logger.warning(f'early stopping. iter: {self.iter}, best_iter: {self.best_params["iter"]}, loss: {self.best_params["loss_valid"]}')
+            self.iter_best = self.best_params["iter"]
         self.writer.close()
         self.save(is_best=True)
+
+    def train(self):
+        """
+        dataloader を使う場合はこっち
+        """
+        self.initialize()
+        try:
+            for _ in range(self.epoch):
+                for _input, label in self.dataloader_train:
+                    # train
+                    self._train(_input, label)
+                    # validation
+                    if len(self.dataloader_valids) > 0 and self.valid_step is not None and self.valid_step > 0 and self.iter % self.valid_step == 0:
+                        for i_valid, dataloader_valid in enumerate(self.dataloader_valids):
+                            _input, label = next(iter(dataloader_valid))
+                            self._valid(_input, label, i_valid=i_valid)
+        except EarlyStoppingError:
+            logger.warning(f'early stopping. iter: {self.iter}, best_iter: {self.best_params["iter"]}, loss: {self.best_params["loss_valid"]}')
+            self.iter_best = self.best_params["iter"]
+        self.writer.close()
+        self.save(is_best=True)
+
+    def predict(self, _x: np.ndarray, _y: np.ndarray=None):
+        _x = self.val_to(torch.from_numpy(_x))
+        if _y is not None: _y = self.val_to(torch.from_numpy(_y))
+        self.mynn.eval()
+        with torch.no_grad():
+            output, label = self.processes(_x, label=_y, is_valid=True)
+        output = output.to("cpu").detach().numpy()
+        if _y is not None: label = label.to("cpu").detach().numpy()
+        if _y is None:
+            return output
+        else:
+            return output, label

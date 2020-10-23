@@ -760,7 +760,7 @@ def split_data_balance(Y: np.ndarray, n_splits: int=1, y_type: str="cls", weight
     return train_indexes, test_indexes
 
 
-def predict_detail(model, X, do_estimators: bool=False, n_jobs: int=-1, **kwargs) -> pd.DataFrame:
+def predict_detail(model, X, do_estimators: bool=False, n_jobs: int=-1, **pred_params) -> pd.DataFrame:
     """
     model の予測結果を一通り計算して出力する
     Return::
@@ -777,7 +777,13 @@ def predict_detail(model, X, do_estimators: bool=False, n_jobs: int=-1, **kwargs
 
     # 訓練データの精度を記録
     ## 結果の格納(訓練データと検証データの結果を格納する)
-    df_score = pd.DataFrame(model.predict(X), columns=["predict"])
+    ndf_pred = model.predict(X, **pred_params)
+    if   len(ndf_pred.shape) == 1:
+        df_score = pd.DataFrame(ndf_pred, columns=["predict"])
+    elif len(ndf_pred.shape) == 2:
+        df_score = pd.DataFrame(ndf_pred, columns=["predict_"+str(i) for i in range(ndf_pred.shape[1])])
+    else:
+        logger.raise_error(f"predict shape:{ndf_pred.shape} is over !!")
     
     ## 確率計算ができるかをチェックする
     ## classes_ には実際のラベルが入る(1,2のラベルを学習させると1,2で入る.0,1では入らない)

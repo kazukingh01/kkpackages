@@ -25,12 +25,11 @@ logger = set_logger()
 _logname = __name__
 
 class MyModel:
-    
     # コンストラクタ
     def __init__(
         self, name: str, 
         # model parameter
-        colname_explain: np.ndarray, colname_answer: str, colname_other: np.ndarray = None,
+        colname_explain: np.ndarray, colname_answer: np.ndarray, colname_other: np.ndarray = None,
         # model
         model=None, 
         # common parameter
@@ -43,7 +42,7 @@ class MyModel:
         self.n_jobs      = n_jobs
         self.colname_explain       = conv_ndarray(colname_explain)
         self.colname_explain_hist  = []
-        self.colname_answer        = colname_answer
+        self.colname_answer        = conv_ndarray([colname_answer]) if isinstance(colname_answer, str) else colname_answer
         self.colname_other         = conv_ndarray(colname_other) if colname_other is not None else np.array([])
         self.df_correlation                     = pd.DataFrame()
         self.df_feature_importances             = pd.DataFrame()
@@ -56,7 +55,7 @@ class MyModel:
         self.optuna         = None
         self.calibrater     = None
         self.is_calibration = False
-        self.preproc        = ProcRegistry(self.colname_explain, np.array([self.colname_answer]))
+        self.preproc        = ProcRegistry(self.colname_explain, self.colname_answer)
         self.n_trained_samples = {}
         self.n_tested_samples  = {}
         self.index_train = np.array([]) # 実際に残す際はマルチインデックスかもしれないので、numpy形式にはならない
@@ -87,9 +86,6 @@ class MyModel:
         モデルのセット(モデルに関わる箇所は初期化)
         Params::
             model: model
-            colname_explain: 特徴量のカラム名リスト
-            colname_answer: 正解ラベルのカラム名
-            colname_other: 交差検証時などに予測に付与したいカラム名リスト
             **params: その他インスタンスに追加したい変数
         """
         self.logger.debug("START")
@@ -176,8 +172,9 @@ class MyModel:
             self.logger.raise_error("model is not set !!")
         if calc_randomtrees:
             if df is None: self.logger.raise_error("dataframe is None !!")
+            if self.colname_answer.shape[0] > 1: self.logger.raise_error(f"answer has over 1 columns. {self.colname_answer}")
             self.df_feature_importances_randomtrees = calc_randomtree_importance(
-                df, colname_explain=self.colname_explain, colname_answer=self.colname_answer, 
+                df, colname_explain=self.colname_explain, colname_answer=self.colname_answer[0], 
                 is_cls_model=self.is_classification_model(), n_jobs=self.n_jobs, **kwargs
             )
         if sort:
@@ -278,11 +275,16 @@ class MyModel:
         pred_params  = pred_params. copy() if pred_params  is not None else {}
 
         # numpyに変換(前処理の結果を反映させる)
-        X_train, Y_train = self.preproc(df_train)
+        X_train, Y_train = self.preproc(df_train, autofix=False)
 
         ## データのスプリット
         split_params["random_seed"] = self.random_seed
-        train_indexes, _ = split_data_balance(Y_train[0], **split_params)
+        if   len(Y_train[0].shape) == 1:
+            train_indexes, _ = split_data_balance(Y_train[0], **split_params)
+        elif len(Y_train[0].shape) == 2:
+            train_indexes, _ = split_data_balance(Y_train[0][:, 0], **split_params)
+        else:
+            logger.raise_error(f'y_train shape is over: {Y_train[0].shape}')
 
         # 学習
         for _i in range(len(X_train)): X_train[_i] = X_train[_i][train_indexes[0]]
@@ -315,19 +317,27 @@ class MyModel:
         # 訓練データの精度を記録
         pred_params["n_jobs"] = self.n_jobs
         df_score = predict_detail(self.model, X_train, **pred_params)
-        df_score["answer"] = Y_train
+        if   type(Y_train) == tuple:
+            pass
+        elif type(Y_train) == np.ndarray and len(Y_train.shape) == 1: 
+            df_score["answer"] = Y_train
+        elif type(Y_train) == np.ndarray and len(Y_train.shape) == 2:
+            for i in np.arange(Y_train.shape[1]):
+                df_score["answer_"+str(i)] = Y_train[:, i]
+        else:
+            logger.warning(f'Y_train shape is over: {Y_train}')
         df_score["index"]  = train_indexes[0]
         for x in self.colname_other: df_score["other_"+x] = df_train.iloc[train_indexes[0], df_train.columns.get_indexer([x]).min()].copy().values
         self.index_train   = df_train.index[train_indexes[0]].copy() # DataFrame のインデックスを残しておく
         self.df_pred_train = df_score.copy()
         
-        ## 評価する
-        df_conf, se_eval = self.eval_model(df_score, **eval_params)
-        self.logger.info("evaluation model by train data.")
-        
-        self.df_cm_train  = df_conf.copy()
-        self.se_eval_train = se_eval.astype(str).copy()
-        self.logger.info(f'\n{self.df_cm_train}\n{self.se_eval_train}')
+        ## 評価する. NNのように複数の出力があるモデルは対象外とする
+        if df_score.columns.isin(["predict", "answer"]).sum() == 2:
+            df_conf, se_eval = self.eval_model(df_score, **eval_params)
+            self.logger.info("evaluation model by train data.")
+            self.df_cm_train  = df_conf.copy()
+            self.se_eval_train = se_eval.astype(str).copy()
+            self.logger.info(f'\n{self.df_cm_train}\n{self.se_eval_train}')
 
         # 特徴量の重要度
         self.logger.info("feature importance saving...")
@@ -387,11 +397,16 @@ class MyModel:
         pred_params  = pred_params. copy() if pred_params  is not None else {}
 
         # numpyに変換(前処理の結果を反映する
-        X_train, Y_train = self.preproc(df_train)
+        X_train, Y_train = self.preproc(df_train, autofix=False)
 
         ## データのスプリット
         split_params["random_seed"] = self.random_seed
-        train_indexes, test_indexes = split_data_balance(Y_train[0], **split_params)
+        if   len(Y_train[0].shape) == 1:
+            train_indexes, test_indexes = split_data_balance(Y_train[0], **split_params)
+        elif len(Y_train[0].shape) == 2:
+            train_indexes, test_indexes = split_data_balance(Y_train[0][:, 0], **split_params)
+        else:
+            logger.raise_error(f'y_train shape is over: {Y_train[0].shape}')
 
         # 交差検証開始
         i_split = 1
@@ -424,10 +439,14 @@ class MyModel:
 
                 # 訓練データの精度を記録
                 pred_params["n_jobs"] = self.n_jobs
-                dfwk = predict_detail(self.model,
-                                       (X_train[0][_index] if len(X_train) == 1 else tuple([_X[_index] for _X in X_train])),
-                                       **pred_params)
-                dfwk["answer"]  = (Y_train[0][_index] if len(Y_train) == 1 else [_Y[_index] for _Y in Y_train])
+                dfwk = predict_detail(self.model, (X_train[0][_index] if len(X_train) == 1 else tuple([_X[_index] for _X in X_train])), **pred_params)
+                if   len(Y_train) == 1 and type(Y_train[0]) == np.ndarray and len(Y_train[0].shape) == 1: 
+                    dfwk["answer"] = Y_train[0][_index]
+                elif len(Y_train) == 1 and type(Y_train[0]) == np.ndarray and len(Y_train[0].shape) == 2:
+                    for _i in np.arange(Y_train[0].shape[1]):
+                        dfwk["answer_"+str(_i)] = Y_train[0][_index, _i]
+                else:
+                    logger.warning(f'Y_train shape is over: {Y_train}')
                 dfwk["index"]   = _index
                 dfwk["type"]    = _type
                 dfwk["i_split"] = i_split
@@ -444,33 +463,34 @@ class MyModel:
 
         ## 評価する
         n_splits = i_split
-        for _type in ["train","test"]:
-            if save_traindata == False and _type == "train": continue
-            df_eval = pd.DataFrame()
-            for i_split in range(1, n_splits): # ここ前までn_splits+1 としていたが、上のforﾙｰﾌﾟで5回ったらi_split=6になるので不用に多かった...
-                dfwkwk = self.df_pred_valid.copy()
-                dfwkwk = dfwkwk[(dfwkwk["i_split"] == i_split) & (dfwkwk["type"]==_type)].copy()
-                _, sewk = self.eval_model(dfwkwk, **eval_params)
-                if df_eval.index.values.shape[0] == 0: df_eval = pd.DataFrame(index=sewk.index) # 初回のみインデックスをつけて初期化
-                df_eval["i_split_"+str(i_split)] = sewk
-                self.logger.debug("\n%s", df_eval) # DEBUG
-            df_eval["mean"] = df_eval.loc[:, df_eval.columns.str.contains("^i_split_", regex=True)].mean(axis=1)
-            df_eval["std"]  = df_eval.loc[:, df_eval.columns.str.contains("^i_split_", regex=True)].std(axis=1)
+        if df_score.columns.isin(["predict", "answer"]).sum() == 2:
+            for _type in ["train","test"]:
+                if save_traindata == False and _type == "train": continue
+                df_eval = pd.DataFrame()
+                for i_split in range(1, n_splits): # ここ前までn_splits+1 としていたが、上のforﾙｰﾌﾟで5回ったらi_split=6になるので不用に多かった...
+                    dfwkwk = self.df_pred_valid.copy()
+                    dfwkwk = dfwkwk[(dfwkwk["i_split"] == i_split) & (dfwkwk["type"]==_type)].copy()
+                    _, sewk = self.eval_model(dfwkwk, **eval_params)
+                    if df_eval.index.values.shape[0] == 0: df_eval = pd.DataFrame(index=sewk.index) # 初回のみインデックスをつけて初期化
+                    df_eval["i_split_"+str(i_split)] = sewk
+                    self.logger.debug("\n%s", df_eval) # DEBUG
+                df_eval["mean"] = df_eval.loc[:, df_eval.columns.str.contains("^i_split_", regex=True)].mean(axis=1)
+                df_eval["std"]  = df_eval.loc[:, df_eval.columns.str.contains("^i_split_", regex=True)].std(axis=1)
 
-            ## 混合行列は全体で作成する
-            dfwkwk  = self.df_pred_valid.copy()
-            dfwkwk  = dfwkwk[(dfwkwk["type"]==_type)].copy()
-            dfwk, _ = self.eval_model(dfwkwk, **eval_params)
-            if _type == "test":
-                self.logger.info("evaluation model by validation data.")
-                self.df_cm_valid  = dfwk.copy()
-                self.se_eval_valid = (df_eval["mean"].astype(str) + " +/- " + df_eval["std"].astype(str)).copy()
-                self.logger.info("\n%s", self.df_cm_valid)
-                self.logger.info("\n%s", self.se_eval_valid)
+                ## 混合行列は全体で作成する
+                dfwkwk  = self.df_pred_valid.copy()
+                dfwkwk  = dfwkwk[(dfwkwk["type"]==_type)].copy()
+                dfwk, _ = self.eval_model(dfwkwk, **eval_params)
+                if _type == "test":
+                    self.logger.info("evaluation model by validation data.")
+                    self.df_cm_valid  = dfwk.copy()
+                    self.se_eval_valid = (df_eval["mean"].astype(str) + " +/- " + df_eval["std"].astype(str)).copy()
+                    self.logger.info("\n%s", self.df_cm_valid)
+                    self.logger.info("\n%s", self.se_eval_valid)
 
         ## 最後に全データでモデルを作成しておく
         split_params["n_splits"] = 1
-        X_train, Y_train = None, None
+        del X_train, Y_train
 
         # early stopping を採用している場合、交差検証の中で最大のiteration回数を全体学習に採用する
         if conv_autostop is not None:
@@ -538,7 +558,7 @@ class MyModel:
             i_split += 1
             # 特徴量の重要度
             if is_callable(model, "feature_importances_") == True:
-                _df = pd.DataFrame(np.array([self.colname_explain.tolist() + [self.colname_answer], model.feature_importances_]).T, columns=["feature_name","importance"])
+                _df = pd.DataFrame(np.array([self.colname_explain.tolist() + self.colname_answer.tolist(), model.feature_importances_]).T, columns=["feature_name","importance"])
                 _df = _df.sort_values(by="importance", ascending=False).reset_index(drop=True)
                 df_importance = pd.concat([df_importance, _df.copy()], axis=0, ignore_index=True, sort=False)
         df_score["index_df"] = -1
@@ -676,34 +696,27 @@ class MyModel:
                          df_test.shape, store_eval, eval_params, pred_params)
         if self.is_model_fit == False:
             self.logger.raise_error("model is not fitted.")
-
         eval_params  = eval_params.copy()
         pred_params  = pred_params.copy()
-
-        Y_test = df_test[self.colname_answer].astype(np.float32).values.copy()
-
         # 予測する
-        df_score = self.predict(df_test, pred_params=pred_params)
+        df_score = self.predict(df=df_test, pred_params=pred_params)
         df_score["i_split"] = 0
         for x in self.colname_other: df_score["other_"+x] = df_test[x].values
         self.df_pred_test = df_score.copy()
-
         ## 評価値を格納
         df_conf, se_eval = self.eval_model(df_score, **eval_params)
         self.logger.info("\n%s", df_conf)
         self.logger.info("\n%s", se_eval)
-
         if store_eval == True:
             ## データを格納する場合(下手に上書きさせないためデフォルトはFalse)
             self.df_cm_test  = df_conf.copy()
             self.se_eval_test = se_eval.copy()
             ## テストデータの割合を格納
             if self.is_classification_model():
-                sewk = pd.DataFrame(Y_test.astype(int)).groupby(0).size().sort_index()
+                sewk = pd.DataFrame(df_score["answer"].values.astype(int)).groupby(0).size().sort_index()
                 self.n_tested_samples = {int(x):sewk[int(x)] for x in self.model.classes_}
             else:
-                self.n_tested_samples = Y_test.shape[0]
-
+                self.n_tested_samples = df_score["answer"].shape[0]
         # ROC Curve plot(クラス分類時のみ行う)
         ## ラベル数分作成する
         if self.is_classification_model():
@@ -712,7 +725,6 @@ class MyModel:
                 y_pre = df_score[_x].values
                 lavel = int(_x.split("_")[-1])
                 self.plot_roc_curve("roc_curve_"+str(lavel), (y_ans==lavel), y_pre)
-
         self.logger.info("END")
         return df_conf, se_eval
 
@@ -901,7 +913,7 @@ class MyModel:
             with open(dir_path + self.name + ".metadata", mode='w') as f:
                 f.write("colname_explain_first="+str(self.colname_explain.tolist() if len(self.colname_explain_hist) == 0 else self.colname_explain_hist[0])+"\n")
                 f.write("colname_explain="      +str(self.colname_explain.tolist())+"\n")
-                f.write("colname_answer='"      +self.colname_answer+"'\n")
+                f.write("colname_answer='"      +str(self.colname_answer.tolist())+"'\n")
                 f.write("n_trained_samples="    +str(self.n_trained_samples)+"\n")
                 f.write("n_tested_samples="     +str(self.n_tested_samples)+"\n")
                 for x in self.se_eval_train.index: f.write("train_"+x+"="+str(self.se_eval_train[x])+"\n")
