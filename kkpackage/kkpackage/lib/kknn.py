@@ -68,11 +68,11 @@ class TorchNN(nn.Module):
                 if isinstance(layer.module, nn.Module):
                     self.add_module(name, layer.module)
                 else:
-                    self.add_module(name, layer.module(*layer.params, **layer.kwards))
+                    self.add_module(name, layer.module(*(() if not layer.params else layer.params), **({} if not layer.kwards else layer.kwards)))
             elif layer.node == 0:
-                self.add_module(name, layer.module(in_size, *layer.params, **layer.kwards))
+                self.add_module(name, layer.module(in_size, *(() if not layer.params else layer.params), **({} if not layer.kwards else layer.kwards)))
             else:
-                self.add_module(name, layer.module(in_size, layer.node, *layer.params, **layer.kwards))
+                self.add_module(name, layer.module(in_size, layer.node, *(() if not layer.params else layer.params), **({} if not layer.kwards else layer.kwards)))
                 in_size = layer.node
             self.list_modules.append(None)
             self.list_modules[-1] = self.__getattr__(name)
@@ -95,7 +95,7 @@ class TorchNN(nn.Module):
 
             # after proc の compile
             self.index_combine_output.append(None)
-            if   self.indexes[i] is None:
+            if   not self.indexes[i]:
                 self.proc_after.append(lambda x, opt: x)
             elif self.indexes[i] == "reshape(x,-1)":
                 self.proc_after.append(lambda x, opt: x.reshape(x.shape[0], -1))
@@ -181,7 +181,7 @@ class BaseNN:
     def __init__(
         self,
         # network
-        mynn: nn.Module,
+        mynn: nn.Module, mtype: str,
         # loss functions
         loss_funcs: List[object],
         # optimizer
@@ -198,13 +198,15 @@ class BaseNN:
         """
         Params::
             mynn: PyTorch形式でのNN
+            mtype: "cls" or "reg"
             loss_funcs: list形式での callable な loss function
             optimizer: Optimizer を継承した class を set. init で
             dataloader_train: DataLoader形式. 画像系の場合は DataLoader使う
             dataloader_valids: DataLoader形式のList
         """
         # NN
-        self.mynn = mynn
+        self.mynn  = mynn
+        self.mtype = mtype
         # Loss
         self.loss_funcs = loss_funcs
         # Optimizer
@@ -220,6 +222,8 @@ class BaseNN:
         # Config
         self.is_cuda   = False
         self.epoch     = epoch
+        # Classification
+        self.classes_: np.ndarray  = None
         # Other
         self.iter      = 0
         self.iter_best = self.epoch
@@ -232,9 +236,19 @@ class BaseNN:
         # TensorBoard
         self.writer = SummaryWriter(log_dir=self.outdir + "logs")
 
+    def __str__(self):
+        string = f"""model type     : {self.mtype}
+loss functions : {self.loss_funcs}
+optimizer      : {self.optimizer}
+batch size     : {self.batch_size}
+epoch          : {self.epoch}
+network        : {self.mynn}"""
+        return string
+
     def initialize(self):
         self.iter      = 0
         self.iter_best = self.epoch
+        self.classes_: np.ndarray = None
         self.min_loss  = float("inf")
         self.early_stopping_iter = 0
         self.best_params = {}
@@ -275,7 +289,10 @@ class BaseNN:
     @classmethod
     def process_label(cls, _input): return _input
 
-    def processes(self, _input, label=None, is_valid: bool=False):
+    def processes(self, _input: object, label: object=None, is_valid: bool=False):
+        """
+        processes の IF は、torch.Tensor 以外にも画像なども想定するため、幅広く想定する
+        """
         output = None
         if is_valid:
             # pre proc
@@ -297,7 +314,7 @@ class BaseNN:
             label  = self.val_to(label)
         return output, label
     
-    def _train(self, _input, label):
+    def _train(self, _input: object, label: object):
         self.mynn.train() # train() と eval() は Dropout があるときに区別する必要がある
         self.mynn.zero_grad() # 勾配を初期化
         self.iter += 1
@@ -348,7 +365,12 @@ class BaseNN:
                 raise EarlyStoppingError
     
     def fit(self, x_train: np.ndarray, y_train: np.ndarray, x_valid: Tuple[np.ndarray]=None, y_valid: Tuple[np.ndarray]=None):
+        """
+        numpy ndarray ベースの train
+        """
         self.initialize()
+        if self.mtype in ["cls"]:
+            self.classes_: np.ndarray = np.sort(np.unique(y_train)).astype(int)
         indexes = np.arange(x_train.shape[0])
         x_train = self.val_to(torch.from_numpy(x_train))
         y_train = self.val_to(torch.from_numpy(y_train))
@@ -393,7 +415,10 @@ class BaseNN:
         self.writer.close()
         self.save(is_best=True)
 
-    def predict(self, _x: np.ndarray, _y: np.ndarray=None):
+    def predict(self, _x: np.ndarray, _y: np.ndarray=None, bc_threshold: float=0.5):
+        """
+        numpy ndarray ベースの predict
+        """
         _x = self.val_to(torch.from_numpy(_x))
         if _y is not None: _y = self.val_to(torch.from_numpy(_y))
         self.mynn.eval()
@@ -401,7 +426,42 @@ class BaseNN:
             output, label = self.processes(_x, label=_y, is_valid=True)
         output = output.to("cpu").detach().numpy()
         if _y is not None: label = label.to("cpu").detach().numpy()
+        if   self.mtype in ["cls"]:
+            if   len(output.shape) == 2 and output.shape[1] == 1:
+                # binary class
+                output = (output > bc_threshold).astype(int).reshape(-1)
+            elif len(output.shape) == 2 and output.shape[1] >  1:
+                # multi class
+                output = np.argmax(output, axis=1)
+            else:
+                logger.raise_error(f"output: {output.shape} is not expected.")
+        elif self.mtype in ["reg"]:
+            if len(output.shape) == 2 and output.shape[1] == 1:
+                # regression で 1次元の場合はreshapeする
+                output = output.reshape(-1)
+            else:
+                pass
         if _y is None:
             return output
         else:
             return output, label
+    
+    def predict_proba(self, _x: np.ndarray):
+        """
+        numpy ndarray ベースの predict
+        """
+        if self.mtype not in ["cls"]: logger.raise_error(f'model type is not cls. {self.mtype}')
+        _x = self.val_to(torch.from_numpy(_x))
+        self.mynn.eval()
+        with torch.no_grad():
+            output, _ = self.processes(_x, label=None, is_valid=True)
+        output = output.to("cpu").detach().numpy()
+        if   len(output.shape) == 2 and output.shape[1] == 1:
+            # binary class
+            output = np.concatenate([1 - output, output], axis=1)
+        elif len(output.shape) == 2 and output.shape[1] >  1:
+            # multi class
+            pass
+        else:
+            logger.raise_error(f"output: {output.shape} is not expected.")
+        return output

@@ -6,6 +6,7 @@ from sklearn.decomposition import PCA
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 
 # local package
+from kkpackage.util.dataframe import nanmap
 from kkpackage.util.common import check_type, is_callable
 from kkpackage.util.logger import set_logger
 logger = set_logger(__name__)
@@ -317,6 +318,18 @@ class MyCondition:
             df = df[df[self.colname] <  self.value]
         elif self.condition == "<=":
             df = df[df[self.colname] <= self.value]
+        return df
+
+class MyDictMap:
+    def __init__(self, columns: np.ndarray, dict_values: dict):
+        self.columns     = columns
+        self.dict_values = dict_values
+    def __str__(self):
+        return f'{self.__class__.__name__}(columns: {self.columns}, dict_values: {self.dict_values})'
+    def __call__(self, df: pd.DataFrame):
+        df = df.copy()
+        for x in self.columns:
+            df[x] = nanmap(df[x], self.dict_values)
         return df
 
 class Calibrater:
