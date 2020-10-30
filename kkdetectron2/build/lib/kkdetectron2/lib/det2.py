@@ -160,14 +160,39 @@ class MyDet2(DefaultTrainer):
         return self.predictor(data)
 
 
-    def img_crop_bbox(self, img: np.ndarray, padding: int=0) -> List[np.ndarray]:
+    def img_crop_bbox(self, img: np.ndarray, padding: int=0, _class=None) -> List[np.ndarray]:
+        """
+        Params::
+            _class: str or int. str の場合はそのクラス名に一致するものを全て切り抜く。intはそのindexのみ。Noneは全部切り抜く
+        """
         output_list = []
         # 推論
         output = self.predictor(img)
         output = output["instances"]
-        ndf = output.get("pred_boxes").to("cpu").tensor.numpy().copy()
-        for x1, y1, x2, y2 in ndf:
-            imgwk = img[int(y1)-padding:int(y2)+padding, int(x1)-padding:int(x2)+padding, :].copy()
+        ndf     = output.get("pred_boxes").to("cpu").tensor.numpy().copy()
+        classes = output.get("pred_classes").to("cpu").numpy().copy()
+        if _class is None:
+            for x1, y1, x2, y2 in ndf:
+                _y1, _y2, _x1, _x2 = int(y1)-padding, int(y2)+padding, int(x1)-padding, int(x2)+padding
+                _y1 = _y1 if _y1 >= 0 else 0
+                _x1 = _x1 if _x1 >= 0 else 0
+                imgwk = img[_y1:_y2, _x1:_x2, :].copy()
+                output_list.append(imgwk)
+        elif type(_class) == str:
+            for i, index in enumerate(classes):
+                if MetadataCatalog.get(self.dataset_name).thing_classes[index] == _class:
+                    x1, y1, x2, y2 = ndf[i]
+                    _y1, _y2, _x1, _x2 = int(y1)-padding, int(y2)+padding, int(x1)-padding, int(x2)+padding
+                    _y1 = _y1 if _y1 >= 0 else 0
+                    _x1 = _x1 if _x1 >= 0 else 0
+                    imgwk = img[_y1:_y2, _x1:_x2, :].copy()
+                    output_list.append(imgwk)
+        elif type(_class) == int:
+            x1, y1, x2, y2 = ndf[_class]
+            _y1, _y2, _x1, _x2 = int(y1)-padding, int(y2)+padding, int(x1)-padding, int(x2)+padding
+            _y1 = _y1 if _y1 >= 0 else 0
+            _x1 = _x1 if _x1 >= 0 else 0
+            imgwk = img[_y1:_y2, _x1:_x2, :].copy()
             output_list.append(imgwk)
         return output_list
 
@@ -196,6 +221,8 @@ class MyDet2(DefaultTrainer):
 
     def draw_annoetation(self, img: np.ndarray, data: dict):
         from detectron2.data import MetadataCatalog
+        import detectron2.utils.visualizer
+        detectron2.utils.visualizer._KEYPOINT_THRESHOLD = 0
         metadata = MetadataCatalog.get(self.dataset_name)
         v = Visualizer(
             img[:, :, ::-1],
@@ -431,6 +458,8 @@ class MyDet2(DefaultTrainer):
                 ndf_pred[int(y1):int(y2+1), int(x1):int(x2+1)] = True
                 iou = (ndf_gt & ndf_pred).sum() / (ndf_gt | ndf_pred).sum()
                 df.loc[df.index[i], colname] = iou
+            # 予測classと違うclass のiou は nan にしておく
+            df.loc[df["class"] != class_name, colname] = np.nan
         # tp, fp
         for class_name in classes:
             df["gt_"+class_name+"_n"] = df.columns.str.contains("gt_iou_"+class_name).sum()
@@ -446,8 +475,8 @@ class MyDet2(DefaultTrainer):
             # ある prediction が tp か fp1 か fp2 なのかを分類する
             dfwk = df.loc[:, df.columns.str.contains("^pred_"+class_name+"_[0-9]+$", regex=True)].copy()
             df["pred_"+class_name] = np.nan
-            dfwkwk = df.loc[:, df.columns.str.contains("^gt_iou_"+class_name, regex=True)].copy()
-            if dfwkwk.shape[0] > 0 and dfwkwk.shape[1] > 0 :
+            dfwkwk = df.loc[:, df.columns.str.contains("^gt_iou_"+class_name, regex=True)].copy().astype(float)
+            if dfwkwk.shape[0] > 0 and dfwkwk.shape[1] > 0:
                 dfwkwk = dfwkwk.loc[~dfwkwk.iloc[:, 0].isna(), :]
                 sewkwk = dfwkwk.idxmax(axis=1).apply(lambda x: x.split("_")[-1]).astype(int)
                 df.loc[dfwk[dfwk.max(axis=1) == 3].index.values, ("pred_"+class_name)] = sewkwk.loc[dfwk[(dfwk.max(axis=1) == 3)].index.values] # TPの場合は、どのGTに対してのTPかのラベルを残す

@@ -16,7 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 # local package
 from imageaug import AugHandler, Augmenter as aug
-from kkreinforce.lib.kknn import TorchNN, Layer
+from kkpackage.lib.kknn import TorchNN, Layer
 from kkimagemods.util.images import pil2cv, cv2pil
 from kkimagemods.util.dataframes import split_data_balance
 from kkimagemods.util.common import get_file_list, correct_dirpath, makedirs

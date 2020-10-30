@@ -3,6 +3,7 @@ import pandas as pd
 import cv2
 import os, sys
 import glob
+from PIL import Image
 from functools import partial
 from typing import List, Tuple
 from joblib import Parallel, delayed
@@ -45,7 +46,7 @@ def drow_bboxes(img_org: np.ndarray, bboxes: List[List[float]], bboxes_class: Li
     return img
 
 
-def convert_seg_point_to_bool(img_height: int, img_width: int, segmentations: List[List[float]]) -> np.ndarray:
+def convert_seg_point_to_bool(img_height: int, img_width: int, segmentations: List[List[float]], outline_only: bool=False) -> np.ndarray:
     """
     Detectron2 では gt_mask では polygon形式であるが、pred_maskではbooleanで表現される
     polygon 形式 [x1, y1, x2, y2, ..] で囲まれた segmentation の area を boolean に変更する関数
@@ -59,10 +60,11 @@ def convert_seg_point_to_bool(img_height: int, img_width: int, segmentations: Li
     for seg in segmentations:
         # segmentation を 線を繋いで描く
         ndf = cv2.polylines(img.copy(), [np.array(seg).reshape(-1,1,2).astype(np.int32)], True, (255,255,255))
-        # 線を描いた後、一番外の輪郭を取得する
-        contours, _ = cv2.findContours(ndf[:, :, 0], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        # 一番外の輪郭内部を埋める
-        ndf = cv2.drawContours(ndf, contours, -1, (255,255,255), -1)
+        if outline_only == False:
+            # 線を描いた後、一番外の輪郭を取得する
+            contours, _ = cv2.findContours(ndf[:, :, 0], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+            # 一番外の輪郭内部を埋める
+            ndf = cv2.drawContours(ndf, contours, -1, (255,255,255), -1)
         img_add += ndf
     # boolrean に変更する
     img_add = (img_add[:, :, 0] > 0).astype(bool)
@@ -141,8 +143,8 @@ def compute_diameter_direct_line(ndf: np.ndarray, preview: bool=False, resize: i
             # 縦で(横でもいいが)ポイントが最小・最大となる２点を取得する
             y_min = points_wk[0].min()
             y_max = points_wk[0].max()
-            x_min = points_wk[1][points_wk[0] == y_min].min()
-            x_max = points_wk[1][points_wk[0] == y_max].max()
+            x_min = points_wk[1].min()
+            x_max = points_wk[1].max()
             list_length.append(np.sqrt((x_max - x_min) ** 2 + (y_max - y_min) ** 2))
     length = round(np.median(list_length), 1)
     img = cv2.putText(img, str(length), (50, 50), cv2.FONT_HERSHEY_COMPLEX, 0.8, (255, 255, 255), lineType=cv2.LINE_AA)
@@ -154,11 +156,57 @@ def compute_diameter_direct_line(ndf: np.ndarray, preview: bool=False, resize: i
     return length
 
 
+def find_minimum_bbox(ndf: np.ndarray, angle_range: (int, int) = (0, 360,), preview: bool=False) -> (np.ndarray, pd.DataFrame):
+    """
+    短形を探す。cv2でもあるが、オリジナル
+    Return::
+        1: 短形の４点と、短辺の間２点をつなげてnp.ndarray で返却。
+    """
+    points   = np.concatenate([[x] for x in np.where(ndf > 0)[::-1]], axis=0) # x, y
+    rotation = lambda x: np.array([np.cos(np.deg2rad(x)), -np.sin(np.deg2rad(x)), np.sin(np.deg2rad(x)), np.cos(np.deg2rad(x))]).reshape(2,2)
+    listwk = []
+    for deg in np.arange(*angle_range, 1):
+        points_rot = rotation(deg) @ points # 回転させる
+        x_min = points_rot[0].min()
+        y_min = points_rot[1].min()
+        x_max = points_rot[0].max()
+        y_max = points_rot[1].max()
+        x_len = x_max - x_min
+        y_len = y_max - y_min
+        area  = x_len * y_len # min は x,y共に0に補正している
+        is_long_x = True if x_len > y_len else False
+        ratio = x_len / y_len if is_long_x else y_len / x_len
+        x1_short, y1_short = x_min if is_long_x else (x_max + x_min)/2, (y_max + y_min)/2 if is_long_x else y_min
+        x2_short, y2_short = x_max if is_long_x else (x_max + x_min)/2, (y_max + y_min)/2 if is_long_x else y_max
+        listwk.append({
+            "rotation": deg, "area":area, "ratio":ratio, "x_min":x_min, "y_min":y_min, "x_max":x_max, "y_max":y_max, 
+            "x1_short":x1_short, "y1_short":y1_short, "x2_short":x2_short, "y2_short":y2_short,
+        })
+    df_deg_area = pd.DataFrame(listwk)
+    se_best     = df_deg_area.loc[ df_deg_area.sort_values("area").index[0] ]
+    points_best = rotation(-1*se_best["rotation"]) @ np.array(
+        [
+            [se_best["x_min"],se_best["x_min"],se_best["x_max"],se_best["x_max"],se_best["x1_short"],se_best["x2_short"]], 
+            [se_best["y_min"],se_best["y_max"],se_best["y_max"],se_best["y_min"],se_best["y1_short"],se_best["y2_short"]],
+        ]
+    )
+    if preview:
+        img = np.zeros((ndf.shape[0], ndf.shape[1], 3)).astype(np.uint8)
+        img[:, :, 0][ndf] = 255
+        points_best_wk = points_best[:, :4].astype(int)
+        for i in range(4):
+            x1, y1 = points_best_wk[:, (i)    ].reshape(-1)
+            x2, y2 = points_best_wk[:, (i+1)%4].reshape(-1)
+            img = cv2.line(img, (x1, y1), (x2, y2), (0, 255, 0), thickness=1, lineType=cv2.LINE_8, shift=0) # 線を引く
+        cv2.imshow("test", img)
+        cv2.waitKey(0)
+    return points_best, df_deg_area
+
+
 def shape_fitting(
-    ndf: np.ndarray, shape_polygon: List[float], 
+    ndf: np.ndarray, shape_polygon: List[float], angle_range: (int, int) = (0, 360,), 
     search_scale_x: (float, float) = (0.75, 1.001, 0.1), search_scale_y: (float, float) = (0.75, 1.001, 0.1),
-    priority_type: str="r_target_and",
-    calc_target_type: str="ratio", ascending: bool=True, n_calc: int=30, 
+    priority_type: str="iou", calc_target_type: str="area", ascending: bool=True, n_calc: int=30, 
     preview: bool=False, n_jobs: int=1
 ) -> (np.ndarray, List[List[int]], pd.DataFrame, pd.Series):
     """
@@ -173,7 +221,7 @@ def shape_fitting(
         search_scale_y:
             shape_polygon の形状を y方向にどの程度 scale して探索するか. 1.0倍のscaleはある短形の短い辺の長さが基準. np.arange()の中身
         priority_type:
-            r_target_and or r_shape_and or f_score(r_target_and と r_shape_and のF値)
+            r_target_and or r_shape_and or f_score(r_target_and と r_shape_and のF値) or iou
         calc_target_type:
             ratio or area. rationは 短形の 長辺/短辺
         ascending:
@@ -190,7 +238,7 @@ def shape_fitting(
             3: 計算した DataFrame
             4: 3のDataFrame内のBestなSeries
     """
-    points   = np.concatenate([[x] for x in np.where(ndf > 0)[::-1]], axis=0)
+    points   = np.concatenate([[x] for x in np.where(ndf > 0)[::-1]], axis=0) # x, y 
     rotation = lambda x: np.array([np.cos(np.deg2rad(x)), -np.sin(np.deg2rad(x)), np.sin(np.deg2rad(x)), np.cos(np.deg2rad(x))]).reshape(2,2)
     # shape を1辺=100で作成する
     img_shape = np.zeros((100,100)).astype(np.uint8)
@@ -207,8 +255,11 @@ def shape_fitting(
     if preview:
         cv2.imshow("test", img_shape)
         cv2.waitKey(0)
+    # 回転させてFittingに最適な角度を見つける
+    _, df_deg_area = find_minimum_bbox(ndf, angle_range=angle_range, preview=False)
+    """
     df_deg_area = pd.DataFrame()
-    for deg in range(360):
+    for deg in np.arange(*angle_range, 1):
         points_rot = rotation(deg) @ points # 回転させる
         points_rot[0] = points_rot[0] - points_rot[0].min()
         points_rot[1] = points_rot[1] - points_rot[1].min()
@@ -217,9 +268,13 @@ def shape_fitting(
         area  = x_max * y_max # min は x,y共に0に補正している
         ratio = x_max / y_max if x_max > y_max else y_max / x_max
         df_deg_area = df_deg_area.append({"rotation": deg, "area":area, "ratio":ratio}, ignore_index=True, sort=False)
+    """
 
     # 並列計算用に関数化する
-    def __work(deg: float, rotation=None, points: np.ndarray=None, img_shape: np.ndarray=None, search_scale_x: Tuple[float]=None, search_scale_y: Tuple[float]=None) -> pd.DataFrame:
+    def __work(
+        deg: float, rotation=None, points: np.ndarray=None, img_shape: np.ndarray=None, 
+        search_scale_x: Tuple[float]=None, search_scale_y: Tuple[float]=None, priority_type: str=None
+    ) -> pd.DataFrame:
         print(f"compute degree: {deg}")
         points_rot = rotation(deg) @ points # 回転させる
         x_min = points_rot[0].min()
@@ -239,24 +294,34 @@ def shape_fitting(
                 ## mask画像に対してshape画像のFit具合を探索する
                 for index_y in np.arange(0, ndfwk.shape[0] - img_shape_wk.shape[0]):
                     for index_x in np.arange(0, ndfwk.shape[1] - img_shape_wk.shape[1]):
-                        n_and  = (ndfwk[index_y:index_y+img_shape_wk.shape[0], index_x:index_x+img_shape_wk.shape[1]] & img_shape_wk).sum()
-                        r_shape_and  = n_and / img_shape_wk.sum()
-                        r_target_and = n_and / ndfwk.sum()
-                        f_score      = 2 * r_target_and * r_shape_and / (r_target_and + r_shape_and)
-                        list_values.append((deg, x_min, y_min, img_shape_wk.shape[1], img_shape_wk.shape[0], index_x, index_y, n_and, r_shape_and, r_target_and, f_score))
+                        n_and, r_shape_and, r_target_and, f_score, iou = np.nan, np.nan, np.nan, np.nan, np.nan
+                        if priority_type == "iou":
+                            ### IoUの計算 (計算が遅くなるので場合分けする)
+                            img_shape_wkwk = np.zeros(ndfwk.shape).astype(bool) # target の copyを作成する
+                            img_shape_wkwk[index_y:index_y+img_shape_wk.shape[0], index_x:index_x+img_shape_wk.shape[1]] = img_shape_wk # target の画像サイズでFitting shapeを再現する
+                            iou = (img_shape_wkwk & ndfwk).sum() / (img_shape_wkwk | ndfwk).sum()
+                        else:
+                            n_and  = (ndfwk[index_y:index_y+img_shape_wk.shape[0], index_x:index_x+img_shape_wk.shape[1]] & img_shape_wk).sum()
+                            r_shape_and  = n_and / img_shape_wk.sum()
+                            r_target_and = n_and / ndfwk.sum()
+                            f_score      = (2 * r_target_and * r_shape_and / (r_target_and + r_shape_and)) if (r_target_and + r_shape_and) > 0 else 0
+                        list_values.append((deg, x_min, y_min, img_shape_wk.shape[1], img_shape_wk.shape[0], index_x, index_y, n_and, r_shape_and, r_target_and, f_score, iou))
         # 結果を格納
         if len(list_values) == 0: return pd.DataFrame() #空DF
         ndf_values = np.array(list_values)
-        dfwk = pd.DataFrame(ndf_values, columns=["rotation", "base_x", "base_y", "x_scale", "y_scale", "index_x", "index_y", "n_and", "r_shape_and", "r_target_and", "f_score"])
+        dfwk = pd.DataFrame(ndf_values, columns=[
+            "rotation", "base_x", "base_y", "x_scale", "y_scale", "index_x", "index_y", 
+            "n_and", "r_shape_and", "r_target_and", "f_score", "iou"
+        ])
         return dfwk
     ## partial で変数を埋め込む
-    func = partial(__work, rotation=rotation, points=points, img_shape=img_shape, search_scale_x=search_scale_x, search_scale_y=search_scale_y)
+    func = partial(__work, rotation=rotation, points=points, img_shape=img_shape, search_scale_x=search_scale_x, search_scale_y=search_scale_y, priority_type=priority_type)
     # area の min から順に30個計算する(並列計算する)
     list_degs = df_deg_area.sort_values(calc_target_type, ascending=ascending)["rotation"].values[:n_calc].tolist()
     list_df = Parallel(n_jobs=n_jobs, backend="loky", verbose=10)([delayed(func)(x) for x in list_degs])
     # 結果を結合
     df = pd.concat(list_df, axis=0, ignore_index=True, sort=False)
-    sewk = df[df[priority_type] == df[priority_type].max()].iloc[0] #priority_typeの最大で判断する
+    sewk = df.loc[df.sort_values(priority_type).index[-1]] #priority_typeの最大で判断する
     # 一番Fitした画像を使って、元画像sizeに合わせたmaskを作成する
     img_shape_wk = cv2.resize(img_shape.copy() , (int(sewk["x_scale"]), int(sewk["y_scale"]))) # 横, 縦
     points_shape = np.concatenate([[x] for x in np.where(img_shape_wk > 0)[::-1]], axis=0).astype(float) # x,y
@@ -377,6 +442,68 @@ def compute_iou(bbox1: (float, float, float, float), bbox2: (float, float, float
     img_binary2[b2y1:b2y2, b2x1:b2x2] = True
     iou = (img_binary1 & img_binary2).sum() /  (img_binary1 | img_binary2).sum()
     return iou
+
+
+def pil2cv(img: Image) -> np.ndarray:
+    ''' PIL型 -> OpenCV型 '''
+    new_image = np.array(img, dtype=np.uint8)
+    if new_image.ndim == 2:  # モノクロ
+        pass
+    elif new_image.shape[2] == 3:  # カラー
+        new_image = cv2.cvtColor(new_image, cv2.COLOR_RGB2BGR)
+    elif new_image.shape[2] == 4:  # 透過
+        new_image = cv2.cvtColor(new_image, cv2.COLOR_RGBA2BGRA)
+    return new_image
+
+
+def cv2pil(img: np.ndarray):
+    ''' OpenCV型 -> PIL型 '''
+    new_image = img.copy()
+    if new_image.ndim == 2:  # モノクロ
+        pass
+    elif new_image.shape[2] == 3:  # カラー
+        new_image = cv2.cvtColor(new_image, cv2.COLOR_BGR2RGB)
+    elif new_image.shape[2] == 4:  # 透過
+        new_image = cv2.cvtColor(new_image, cv2.COLOR_BGRA2RGBA)
+    new_image = Image.fromarray(new_image)
+    return new_image
+
+
+def scale_polygons(polygons: List[float], scale: float, size: (int, int)=None, base_point: str="center"):
+    """
+    polygonsの値を中心を起点にscaleする. sizeからはみ出した点は補正する
+    Params::
+        polygons: x1, y1, x2, y2, ... の記載
+        scale: scale する size
+        size: height, weight
+    """
+    ndf = np.array(polygons).reshape(-1, 2)
+    if base_point == "center":
+        x_min = ndf[:, 0].min()
+        x_max = ndf[:, 0].max()
+        y_min = ndf[:, 1].min()
+        y_max = ndf[:, 1].max()
+        center_x = (x_min + x_max) / 2
+        center_y = (y_min + y_max) / 2
+        ndf[:, 0] = ndf[:, 0] - center_x # 中心に戻す
+        ndf[:, 1] = ndf[:, 1] - center_y
+        ndf = ndf * scale # 等倍にscaleする
+        ndf[:, 0] = ndf[:, 0] + center_x # 中心を元に戻す
+        ndf[:, 1] = ndf[:, 1] + center_y
+    if size is not None:
+        x_min, x_max, y_min, y_max = ndf[:, 0].min(), ndf[:, 0].max(), ndf[:, 1].min(), ndf[:, 1].max()
+        if x_min < 0 or x_max >= size[1] or y_min < 0 or y_max >= size[0]:
+            diff_x_min = 0       if x_min >= 0 else abs(int(x_min))
+            diff_y_min = 0       if y_min >= 0 else abs(int(y_min))
+            diff_x_max = size[1] if x_max < size[1] else int(x_max) - size[1]
+            diff_y_max = size[0] if y_max < size[0] else int(y_max) - size[0]
+            img = np.zeros((size[0] + diff_y_min + diff_y_max, size[1] + diff_x_min + diff_x_max)).astype(bool) # はみ出したサイズも含めた定義
+            img[diff_y_min:diff_y_min+size[0], diff_x_min:diff_x_min+size[1]] = True # 本来の画像の部分だけ mask
+            mask = convert_seg_point_to_bool(img.shape[0], img.shape[1], [ndf.reshape(-1).tolist()], outline_only=True)
+            mask = img & mask
+            ndf  = np.concatenate([[x] for x in np.where(mask)[::-1]], axis=0) # x, y 
+            ndf  = ndf.T
+    return ndf.reshape(-1).tolist()
 
 
 def add_image_in_region(binary: np.ndarray, addImage: np.ndarray, \

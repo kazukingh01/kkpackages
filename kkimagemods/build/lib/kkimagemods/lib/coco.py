@@ -147,11 +147,14 @@ class Ndds2Coco:
                     },
                     keypoints={
                         "hook":{
-                            "kpt_a" :[{"name":"kpt_a",  "type":"center"}],
-                            "kpt_cb":[{"name":"kpt_cb", "type":"center"}],
-                            "kpt_c" :[{"name":"kpt_c",  "type":"center"}],
-                            "kpt_cd":[{"name":"kpt_cb", "type":"center"}],
-                            "kpt_e" :[{"name":"kpt_e",  "type":"center"}],
+                            "kpt_a"    :[{"name":"kpt_a", "type":"center"}],
+                            "kpt_b"    :[{"name":"kpt_b", "type":"center"}],
+                            "kpt_cb"   :[{"name":"kpt_cb","type":"center"}],
+                            "kpt_c"    :[{"name":"kpt_c", "type":"center"}],
+                            "kpt_cd"   :[{"name":"kpt_cd","type":"center"}],
+                            "kpt_d"    :[{"name":"kpt_d", "type":"center"}],
+                            "kpt_e"    :[{"name":"kpt_e", "type":"center"}],
+                            "kpt_dl_dr":[{"name":"kpt_dl","type":"left"  }, {"name":"kpt_dr","type":"right" }],
                         },
                     },
                     segmentation={
@@ -321,7 +324,6 @@ class Ndds2Coco:
             se["height"]     = height
             se["width"]      = width
             se["category_name"] = name
-
             # visivility threshold
             thre = 0.
             if self.instance_merge is not None:
@@ -335,7 +337,6 @@ class Ndds2Coco:
                         thre = dictwk["visibility"]
                         break
             if thre < visibility_threshold: continue
-
             ## instance の処理
             if   self.convert_mode == "cs":
                 ndf = np.isin(img, self.instances[name]).astype(np.uint8)
@@ -383,7 +384,6 @@ class Ndds2Coco:
                             ndf_seg[~ndf_seg_bool] = 0
                         else:
                             raise Exception(f'unexpected type: {seginfo["type"]}')
-
             contours = cv2.findContours(ndf_seg, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]
             se["segmentation"] = [contour.reshape(-1) for contour in contours]
             ## keypoint の処理
@@ -400,7 +400,27 @@ class Ndds2Coco:
                             p_key = (int((p1[0]+p2[0])/2.), int((p1[1]+p2[1])/2.), )
                             vis   = 1 if ndf[p_key[1], p_key[0]] == 0 else 2
                             se_key[info_key["name"]] = (p_key[0], p_key[1], vis, ) # keypoint の x, y, visibility(0 or 1 or 2). 0:ラベルがない,1:ラベルがあって見えない,2:ラベルがあって見える
-                        elif info_key["type"] == "left":
+                        elif info_key["type"] in ["left", "tleft", "bleft"]:
+                            p1    = _object["bounding_box"]["top_left"][::-1] #y,xになっているので、x,yに入れ替える
+                            p2    = _object["bounding_box"]["bottom_right"][::-1] #y,xになっているので、x,yに入れ替える
+                            _y    = -1
+                            if   info_key["type"] ==  "left": _y = int((p1[1]+p2[1])/2.)
+                            elif info_key["type"] == "tleft": _y = int(p1[1])
+                            elif info_key["type"] == "bleft": _y = int(p2[1])
+                            p_key = (int(p1[0]), _y, )
+                            vis   = 1 if ndf[p_key[1], p_key[0]] == 0 else 2
+                            se_key[info_key["name"]] = (p_key[0], p_key[1], vis, )
+                        elif info_key["type"] in ["right", "tright", "bright"]:
+                            p1    = _object["bounding_box"]["top_left"][::-1] #y,xになっているので、x,yに入れ替える
+                            p2    = _object["bounding_box"]["bottom_right"][::-1] #y,xになっているので、x,yに入れ替える
+                            _y    = -1
+                            if   info_key["type"] ==  "right": _y = int((p1[1]+p2[1])/2.)
+                            elif info_key["type"] == "tright": _y = int(p1[1])
+                            elif info_key["type"] == "bright": _y = int(p2[1])
+                            p_key = (int(p2[0]), _y, )
+                            vis   = 1 if ndf[p_key[1], p_key[0]] == 0 else 2
+                            se_key[info_key["name"]] = (p_key[0], p_key[1], vis, )
+                        elif info_key["type"] == "left_seg":
                             try:
                                 tate = np.where(ndf > 0)[0] # np.whereは縦, 横
                                 yoko = np.where(ndf > 0)[1]
@@ -413,7 +433,7 @@ class Ndds2Coco:
                                 p_key = (int(p1[0]), int((p1[1]+p2[1])/2.), )
                                 vis   = 1
                             se_key[info_key["name"]] = (p_key[0], p_key[1], vis, ) 
-                        elif info_key["type"] == "right":
+                        elif info_key["type"] == "right_seg":
                             try:
                                 tate = np.where(ndf > 0)[0] # np.whereは縦, 横
                                 yoko = np.where(ndf > 0)[1]
@@ -1062,8 +1082,7 @@ class CocoManager:
                     # annotation 単位でループする
                     for imgid, (x,y,w,h,) in df[df["categories_name"] == ann][["images_id", "annotations_bbox"]].copy().values:
                         logger.info(f"image id: {imgid}")
-                        # crop に使う category は除く. さらに同一のimgidで絞る
-                        df_ret = df[~(df["categories_name"] == ann) & (df["images_id"] == imgid)].copy()
+                        df_ret = df[(df["images_id"] == imgid)].copy()
                         str_resize = "_".join([str(_y) for _y in [int(x), int(y), int(x+w), int(y+h)]])
                         df_ret["__resize"] = str_resize # 最後に画像を切り抜くために箱を用意する
                         bboxwk = [int(x), int(y), 0, 0]
@@ -1072,16 +1091,6 @@ class CocoManager:
                         df_ret["images_width"]  = int(w)
                         ## bbox の 修正(細かな補正は for文の外で行う)
                         df_ret["annotations_bbox"] = df_ret["annotations_bbox"].apply(lambda _x: [_y - bboxwk[_i] for _i, _y in enumerate(_x)])
-                        """
-                        ndf = df_ret["annotations_bbox"].values # ndarray に渡して参照形式で修正する. ※汚いけど...
-                        for _i in np.arange(ndf.shape[0]):
-                            _listwk = ndf[_i]
-                            ### 先に w,h を計算しないと値がおかしくなる
-                            _listwk[2] = int(w) - _listwk[0] if (_listwk[0] + _listwk[2]) > int(w) else _listwk[2] # 画面サイズ以上は画面サイズを上限に
-                            _listwk[3] = int(h) - _listwk[1] if (_listwk[1] + _listwk[3]) > int(h) else _listwk[3]
-                            _listwk[0] = 0 if _listwk[0] < 0 else _listwk[0] # 0 以下は0に
-                            _listwk[1] = 0 if _listwk[1] < 0 else _listwk[1]
-                        """
                         ## segmentation の 修正
                         ### segmentation : [[x1, y1, x2, y2, ...], [x1', y1', x2', y2', ...], ]
                         df_ret["annotations_segmentation"] = df_ret["annotations_segmentation"].apply(lambda _x: [[_y - bboxwk[_i%2] for _i, _y in enumerate(_listwk)] for _listwk in _x])
@@ -1097,7 +1106,24 @@ class CocoManager:
                                     else:
                                         _listwk[_j] = 0      if _listwk[_j] < 0      else _listwk[_j]
                                         _listwk[_j] = int(h) if _listwk[_j] > int(h) else _listwk[_j]
-
+                        ## Keypoint の修正
+                        if len(df_ret["categories_keypoints"].iloc[0]) > 0:
+                            ndf = df_ret["annotations_keypoints"].values
+                            ndf = np.concatenate([[x] for x in ndf], axis=0)
+                            ndf = ndf.reshape(ndf.shape[0], -1, 3)
+                            ndf[:, :, 0] = ndf[:, :, 0] - bboxwk[0] # 切り取り位置を引く
+                            ndf[:, :, 1] = ndf[:, :, 1] - bboxwk[1] # 切り取り位置を引く
+                            ndf[:, :, 2][ndf[:, :, 0] <= 0] = 0 # はみ出したKeypointはvisを0にする
+                            ndf[:, :, 2][ndf[:, :, 1] <= 0] = 0 # はみ出したKeypointはvisを0にする
+                            ndf[:, :, 0][ndf[:, :, 2] == 0] = 0 # vis=0のkeypointはx, y を 0 にする
+                            ndf[:, :, 1][ndf[:, :, 2] == 0] = 0 # vis=0のkeypointはx, y を 0 にする
+                            ndf_nkpts = (ndf[:, :, 2] > 0).sum(axis=1).reshape(-1)
+                            ndf = ndf.reshape(ndf.shape[0], -1)
+                            sewk = pd.Series(dtype=object)
+                            for i, index in enumerate(df_ret.index): sewk[str(index)] = ndf[i].tolist()
+                            sewk.index = df_ret.index.copy()
+                            df_ret["annotations_keypoints"]     = sewk
+                            df_ret["annotations_num_keypoints"] = ndf_nkpts.tolist()
                         list_df_ret.append(df_ret.copy())
         df_ret = pd.concat(list_df_ret, axis=0, ignore_index=True, sort=False)
         # bbox の枠外などの補正
