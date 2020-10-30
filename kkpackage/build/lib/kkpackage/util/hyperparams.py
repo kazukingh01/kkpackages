@@ -1,7 +1,9 @@
 from functools import partial
+import os, json
 import numpy as np
 import pandas as pd
 import optuna
+import sqlite3
 # local package
 from kkpackage.util.learning import evalate, split_data_balance, conv_validdata_in_fitparmas, is_classification_model
 from kkpackage.util.common import is_callable
@@ -95,7 +97,7 @@ def search_hyperparams_by_optuna(
     n_trials: int=100, iters: int=None, X_test: np.ndarray=None, Y_test: np.ndarray=None, dict_param="auto", tuning_eval: str="rmse", 
     split_params: dict={"n_splits":1,"y_type":"cls","weight":"balance","is_bootstrap":False}, 
     fit_params: dict={}, eval_params: dict={}, n_jobs: int=1
-) -> (optuna.Study, pd.DataFrame, ):
+) -> (pd.DataFrame, dict, ):
     """
     optuna でパラメータ探索
     Params::
@@ -114,7 +116,7 @@ def search_hyperparams_by_optuna(
         split_params:
             この設定に従ってsplit_data_balanceでデータを分割もしくはアンダーオーバーサンプリングする。
             X_test, Y_test がNoneでなければ検証データはこちらが優先されるが、Noneの場合
-            split_data_balanceのindexを訓練と検証に使用して交差顕彰を行う
+            split_data_balanceのindexを訓練と検証に使用して交差検証を行う
         fit_params: fit 時のパラメータ
         eval_params: 評価時のパラメータ
     """
@@ -127,26 +129,26 @@ def search_hyperparams_by_optuna(
                 
         if   str(type(model)).find("lightgbm.sklearn.LGBMClassifier") >= 0:
             dict_param = {
-                "boosting_type"    :["category","gbdt","dart","goss"], 
+                "boosting_type"    :["category","gbdt","dart"], #"goss"
                 "num_leaves"       :["int",10,1500],
                 "max_depth"        :["const",-1],
-                "learning_rate"    :["const",0.3], 
+                "learning_rate"    :["const",0.03], 
                 "n_estimators"     :["const", 5000], 
                 "subsample_for_bin":["const", 200000], 
                 ## 必要に応じて変更する ‘binary’ or ‘multiclass'
                 "objective"        :["const",("binary" if bool_class_binary==True else "multiclass")], 
                 "class_weight"     :["const", "balanced"], 
-                "min_child_weight" :["float",0,1000], 
+                "min_child_weight" :["category"] + [0.01 * (2**i) for i in range(23)], 
                 "min_child_samples":["int",1,1000], 
-                "subsample"        :["float", 0.001, 1.0], 
-                "colsample_bytree" :["float", 0.001, 1.0], 
-                "reg_lambda"       :["float",0,1000], 
+                "subsample"        :["step", 0.01,  0.99,  0.01], 
+                "colsample_bytree" :["step", 0.001, 0.99, 0.001], 
+                "reg_alpha"        :["category", 0] + [0.01 * (2**i) for i in range(23)],
+                "reg_lambda"       :["category", 0] + [0.01 * (2**i) for i in range(23)],
                 "random_state"     :["const",1], 
                 "n_jobs"           :["const", n_jobs] 
             }
         elif str(type(model)).find("LGBMRegressor") >= 0:
             dict_param = {
-                #"boosting_type"    :["category","gbdt","dart","goss","rf"], 
                 "boosting_type"    :["const","gbdt"], 
                 "num_leaves"       :["int",10,1000],
                 "max_depth"        :["const",-1], 
@@ -157,26 +159,29 @@ def search_hyperparams_by_optuna(
                 "class_weight"     :["const", None], 
                 "min_child_weight" :["float",0,100], 
                 "min_child_samples":["int",1,100], 
-                "subsample"        :["category", 0.01, 0.02, 0.04, 0.1, 0.2, 0.4], 
-                "colsample_bytree" :["category", 0.01, 0.02, 0.04, 0.1, 0.2, 0.4], 
+                "subsample"        :["step", 0.01, 0.99, 0.01], 
+                "colsample_bytree" :["step", 0.01, 0.99, 0.01], 
                 "reg_lambda"       :["float",0,100], 
                 "random_state"     :["const",1], 
                 "n_jobs"           :["const", n_jobs] 
             }
         elif str(type(model)).find("xgboost.sklearn.XGBClassifier") >= 0:
             dict_param = {
-                "max_depth"        :["int", 3, 10], 
-                "learning_rate"    :["category",0.05,0.1,0.2,0.3,0.5], 
-                "n_estimators"     :["int",100,3000], 
-                "booster"          :["category","gbtree","gblinear","dart"], 
-                "n_jobs"           :["const", n_jobs], 
-                "gamma"            :["float", 0, 100], 
-                "min_child_weight" :["float",0,10], 
-                "max_delta_step"   :["int", 0, 100], 
-                "subsample"        :["step", 0.1, 0.9, 0.1], 
-                "colsample_bytree" :["step", 0.1, 0.9, 0.1], 
-                ## 必要に応じて変更する reg:linear, multi:softmax, multi:softprob
+                "n_estimators"     :["const", 3000], 
+                "max_depth"        :["int", 3, 15], 
+                "learning_rate"    :["const", 0.1], 
                 "objective"        :["const",("binary:logistic" if bool_class_binary==True else "multi:softmax")], 
+                "booster"          :["category", "gbtree","dart"], 
+                "n_jobs"           :["const", n_jobs], 
+                "gamma"            :["category", 0] + [0.01 * (2**i) for i in range(16)],
+                "min_child_weight" :["category", 0] + [0.01 * (2**i) for i in range(16)],
+                "max_delta_step"   :["const", 0], 
+                "subsample"        :["step", 0.01, 0.99, 0.01], 
+                "colsample_bytree" :["step", 0.01, 0.99, 0.01], 
+                "colsample_bylevel":["const", 1],
+                "colsample_bynode" :["const", 1],
+                "reg_alpha"        :["category", 0] + [0.01 * (2**i) for i in range(16)],
+                "reg_lambda"       :["category", 0] + [0.01 * (2**i) for i in range(16)],
                 "random_state"     :["const",1] 
             }
         elif str(type(model)).find("HistGradientBoostingClassifier") >= 0:
@@ -243,6 +248,65 @@ def search_hyperparams_by_optuna(
         sewk = pd.Series(i_trial.params)
         sewk["value"]  = i_trial.value
         df_optuna = df_optuna.append(sewk, ignore_index=True)
+    # パラメータを作成する
+    dict_param_ret = {}
+    for key, val in  dict_param.items():
+        if val[0] == "const": dict_param_ret[key] = val[-1]
+    for key, val in  optuna_study.best_params.items():
+        dict_param_ret[key] = val
 
     logger.info("END")
-    return df_optuna
+    return df_optuna, dict_param_ret
+
+
+def get_optuna_study_from_db(dbpath: str) -> pd.DataFrame:
+    """
+    optuna で保存された sqlite db からstudyした情報を一覧取得する
+    Params::
+        dbpath: db の path
+    """
+    logger.info("START")
+    if not os.path.exists(dbpath):
+        logger.raise_error(f'{dbpath} is not exists.')
+    conn = sqlite3.connect(dbpath)
+    df   = pd.read_sql_query("SELECT trial_id, value FROM trials WHERE state = 'COMPLETE'", conn)
+    """
+    >>> df
+        trial_id  number  study_id     state         value              datetime_start           datetime_complete
+    0           1       0         1  COMPLETE  11844.585332  2020-10-14 21:39:02.074181  2020-10-14 21:40:19.688830
+    1           2       1         1  COMPLETE  13209.351599  2020-10-14 21:40:19.715214  2020-10-14 21:40:40.969562
+    ..        ...     ...       ...       ...           ...                         ...                         ...
+    678       679     678         1  COMPLETE  13726.561050  2020-10-15 08:57:42.013133  2020-10-15 08:57:46.098881
+    679       680     679         1  COMPLETE  13032.502238  2020-10-15 08:57:46.122198  2020-10-15 08:57:50.876729
+
+    """
+    dfwk = pd.read_sql_query('SELECT * FROM trial_params', conn)
+    """
+    >>> dfwk
+        param_id  trial_id         param_name  param_value                                  distribution_json
+    0            1         1   min_child_weight         0.00  {"name": "CategoricalDistribution", "attribute...
+    1            2         1  min_child_samples       779.00  {"name": "IntUniformDistribution", "attributes...
+    ...        ...       ...                ...          ...                                                ...
+    3398      3399       680   colsample_bytree         0.01  {"name": "DiscreteUniformDistribution", "attri...
+    3399      3400       680         reg_lambda        10.00  {"name": "CategoricalDistribution", "attribute...
+
+    """
+    conn.close()
+    params = {}
+    for name, dictwk in dfwk.groupby("param_name").first().reset_index()[["param_name", "distribution_json"]].values:
+        params[name] = None
+        dictwk = json.loads(dictwk)
+        if dictwk["name"] == "CategoricalDistribution":
+            dictwkwk = {}
+            for i, x in enumerate(dictwk["attributes"]["choices"]):
+                dictwkwk[i] = x
+            params[name] = dictwkwk
+    dfwk = dfwk.pivot_table(values="param_value", index="trial_id", columns="param_name", aggfunc="first").reset_index()
+    for x, y in params.items():
+        if y is not None:
+            dfwk[x] = dfwk[x].astype(int).map(y)
+    df = pd.merge(df, dfwk, how="left", on="trial_id")
+    df = df.sort_values("value")
+    logger.info("END")
+    return df
+
