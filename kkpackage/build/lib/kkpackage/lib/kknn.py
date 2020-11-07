@@ -7,7 +7,6 @@ import torch
 from torch import nn
 from torch.optim.optimizer import Optimizer
 from torch.utils.tensorboard import SummaryWriter
-import torch_optimizer as optim
 # local package
 from kkpackage.util.dataframe import divide_index
 from kkpackage.util.common import is_callable, correct_dirpath, makedirs, check_type
@@ -198,7 +197,7 @@ class BaseNN:
         # loss functions
         loss_funcs: List[object],
         # optimizer
-        optimizer: Optimizer=optim.RAdam, optim_dict: dict={"lr":0.001, "weight_decay":0},
+        optimizer: Optimizer=torch.optim.SGD, optim_dict: dict={"lr":0.001, "weight_decay":0},
         # train dataloader
         dataloader_train: torch.utils.data.DataLoader=None,
         # validation dataset
@@ -224,6 +223,8 @@ class BaseNN:
         self.loss_funcs = loss_funcs
         # Optimizer
         self.optimizer = optimizer(self.mynn.parameters(), **optim_dict)
+        self.optimizer_class = optimizer
+        self.optimizer_dict  = optim_dict
         # DataLoader
         self.dataloader_train  = dataloader_train
         self.dataloader_valids = dataloader_valids
@@ -273,6 +274,7 @@ network        : {self.mynn}"""
         self.early_stopping_iter = 0
         self.best_params = {}
         self.mynn.reset_parameters()
+        self.optimizer = self.optimizer_class(self.mynn.parameters(), **self.optimizer_dict)
 
     def to_cuda(self):
         """ GPUの使用をONにする """
@@ -287,7 +289,7 @@ network        : {self.mynn}"""
     def save(self, filename: str=None, is_best: bool=False):
         if is_best:
             if len(self.best_params) > 0:
-                torch.save(self.best_params["params"], self.outdir + filename + f'.{self.best_params["iter"]}' \
+                torch.save(self.best_params["params"], self.outdir + filename \
                 if filename is not None else self.outdir + f'model_best_{self.best_params["iter"]}.pth')
             else:
                 logger.warning("self.best_params is nothing.")

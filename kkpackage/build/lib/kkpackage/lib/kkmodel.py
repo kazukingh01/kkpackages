@@ -117,8 +117,8 @@ class MyModel:
             cut_features         = self.colname_explain[~np.isin(self.colname_explain, alive_features)]
             self.colname_explain = self.colname_explain[ np.isin(self.colname_explain, alive_features)]
         self.preproc.set_columns(self.colname_explain, type_proc="x")
-        self.logger.info(f"cut   features by variance :{cut_features.shape[0]        }. features...{cut_features}")
-        self.logger.info(f"alive features by variance :{self.colname_explain.shape[0]}. features...{self.colname_explain}")
+        self.logger.info(f"cut   features :{cut_features.shape[0]        }. features...{cut_features}")
+        self.logger.info(f"alive features :{self.colname_explain.shape[0]}. features...{self.colname_explain}")
         self.logger.info("END")
 
 
@@ -155,8 +155,9 @@ class MyModel:
         self.logger.info("START")
         self.logger.info(f"df shape:{df.shape}, cutoff:{cutoff}, ignore_nan_mode:{ignore_nan_mode}")
         self.logger.info(f"features:{self.colname_explain.shape}")
+        df = self.preproc(df[self.colname_explain], x_proc=False, y_proc=False, row_proc=True)
         df_corr, _ = search_features_by_correlation(
-            df[self.colname_explain], cutoff=cutoff, ignore_nan_mode=ignore_nan_mode, 
+            df, cutoff=cutoff, ignore_nan_mode=ignore_nan_mode, 
             n_div_col=n_div_col, on_gpu_size=on_gpu_size, min_n_not_nan=min_n_not_nan, n_jobs=self.n_jobs
         )
         self.df_correlation = df_corr.copy()
@@ -527,7 +528,7 @@ class MyModel:
     
 
     def adversarial_validation(
-            self, df_train: pd.DataFrame, df_test: pd.DataFrame, 
+            self, df_train: pd.DataFrame, df_test: pd.DataFrame, use_answer: bool=False,
             model=None, n_splits: int=5, n_estimators: int=1000
         ):
         """
@@ -545,13 +546,14 @@ class MyModel:
         if model is None: model = ExtraTreesClassifier(n_estimators=n_estimators, n_jobs=self.n_jobs)
         self.logger.info(f'model: \n{model}')
         # numpyに変換(前処理の結果を反映する
-        X_train, Y_train = self.preproc(df_train, autofix=True)
-        X_test,  Y_test  = self.preproc(df_test,  autofix=True)
-        # データをくっつける(正解ラベルも使う)
-        X_train = np.concatenate([X_train, Y_train.reshape(-1).reshape(-1, 1)], axis=1).astype(X_train.dtype) #X_trainの型でCASTする
-        X_test  = np.concatenate([X_test,  Y_test .reshape(-1).reshape(-1, 1)], axis=1).astype(X_test.dtype ) #X_test の型でCASTする
+        X_train, Y_train = self.preproc(df_train, autofix=True, y_proc=use_answer)
+        X_test,  Y_test  = self.preproc(df_test,  autofix=True, y_proc=use_answer)
+        if use_answer:
+            # データをくっつける(正解ラベルも使う)
+            X_train = np.concatenate([X_train, Y_train.reshape(-1).reshape(-1, 1)], axis=1).astype(X_train.dtype) #X_trainの型でCASTする
+            X_test  = np.concatenate([X_test,  Y_test .reshape(-1).reshape(-1, 1)], axis=1).astype(X_test.dtype ) #X_test の型でCASTする
+        Y_train = np.concatenate([np.zeros(X_train.shape[0]), np.ones(X_test.shape[0])], axis=0).astype(np.int32) # 先にこっちを作る
         X_train = np.concatenate([X_train, X_test], axis=0).astype(X_train.dtype) # 連結する
-        Y_train = np.concatenate([np.zeros(Y_train.reshape(-1).shape[0]), np.ones(Y_test.reshape(-1).shape[0])], axis=0).astype(np.int32)
         ## データのスプリット.(under samplingにしておく)
         train_indexes, test_indexes = split_data_balance(Y_train, n_splits=n_splits, y_type="cls", weight="balance", is_bootstrap=False, random_seed=self.random_seed)
 
@@ -576,7 +578,10 @@ class MyModel:
             i_split += 1
             # 特徴量の重要度
             if is_callable(model, "feature_importances_") == True:
-                _df = pd.DataFrame(np.array([self.colname_explain.tolist() + self.colname_answer.tolist(), model.feature_importances_]).T, columns=["feature_name","importance"])
+                if use_answer:
+                    _df = pd.DataFrame(np.array([self.colname_explain.tolist() + self.colname_answer.tolist(), model.feature_importances_]).T, columns=["feature_name","importance"])
+                else:
+                    _df = pd.DataFrame(np.array([self.colname_explain.tolist(), model.feature_importances_]).T, columns=["feature_name","importance"])
                 _df = _df.sort_values(by="importance", ascending=False).reset_index(drop=True)
                 df_importance = pd.concat([df_importance, _df.copy()], axis=0, ignore_index=True, sort=False)
         df_score["index_df"] = -1

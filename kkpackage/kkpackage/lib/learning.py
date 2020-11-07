@@ -42,7 +42,11 @@ class ProcRegistry(object):
     def __call__(self, df: pd.DataFrame, autofix: bool=False, x_proc: bool=True, y_proc: bool=True, row_proc: bool=True):
         logger.info("START")
         # row proc
-        if row_proc: df = self.proc_row(df)
+        if row_proc:
+            df = self.proc_row(df)
+            if x_proc == False and y_proc == False:
+                ## df だけの返却方法
+                return df
         # col proc
         list_x, list_y = [], []
         for name in self.processing.keys():
