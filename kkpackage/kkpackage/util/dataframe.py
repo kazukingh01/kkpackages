@@ -258,3 +258,18 @@ def nanmap(columns: pd.Index, dict_map: dict) -> np.ndarray:
     columns   = columns.values
     columns[(columnswk != "__work")] = columnswk[(columnswk != "__work")]
     return columns
+
+def divide_index(indexes: np.ndarray,  n_div: int=1, random: bool=False) -> List[List[object]]:
+    """
+    indexesにある配列をn_div個に均等に分割する
+    """
+    ndf = np.arange(indexes.shape[0])
+    if random: ndf = np.random.permutation(ndf)
+    n   = indexes.shape[0] // n_div
+    listwk = []
+    for i in np.arange(n_div):
+        if i == n_div - 1:
+            listwk.append(indexes[ndf[i*n:]].tolist())
+        else:
+            listwk.append(indexes[ndf[i*n:i*n+n]].tolist())
+    return listwk

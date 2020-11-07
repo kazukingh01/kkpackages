@@ -62,7 +62,7 @@ class ProcRegistry(object):
                 ndf = _proc(ndf)
                 logger.info(f"after  shape: {ndf.shape}")
                 if shape_before[0] != ndf.shape[0]:
-                    logger.raise_error("The number of rows is different from before and after process.")
+                    logger.warning("The number of rows is different from before and after process.")
             if   self.processing[name]["type"] == "x": list_x.append(ndf)
             elif self.processing[name]["type"] == "y": list_y.append(ndf)
         if autofix:
@@ -265,7 +265,71 @@ class MyOneHotEncoder:
         ndf = np.concatenate([ndf, output], axis=1)
         return ndf
     def fit(self, ndf: np.ndarray):
-        self.model.fit(ndf)
+        bool_col = np.zeros(ndf.shape[1]).astype(bool)
+        bool_col[self.target_indexes] = True
+        self.model.fit(ndf[:, bool_col])
+
+class MyOneHotInverse:
+    def __init__(self, target_indexes: List[int]):
+        check_type(target_indexes, [list, tuple])
+        self.target_indexes = target_indexes
+    def __str__(self): return f'{self.__class__.__name__}(target_indexes: {self.target_indexes})'
+    def __call__(self, ndf: np.ndarray):
+        bool_col = np.zeros(ndf.shape[1]).astype(bool)
+        bool_col[self.target_indexes] = True
+        indexes = np.where(ndf[:, bool_col].astype(bool))[1].copy()
+        if indexes.shape[0] != ndf.shape[0]:
+            logger.raise_error(f'input values is not OneHot type: \n{ndf}')
+        ndf = ndf[:, ~bool_col].copy()
+        ndf = np.concatenate([ndf, indexes.reshape(-1, 1)], axis=1)
+        return ndf
+    def fit(self, ndf: np.ndarray):
+        bool_col = np.zeros(ndf.shape[1]).astype(bool)
+        bool_col[self.target_indexes] = True
+        if (ndf[:, bool_col].sum(axis=1) == 1).sum() != ndf.shape[0]:
+            logger.raise_error(f'input values is not OneHot type: \n{ndf}')
+
+class MyOneHotAuto:
+    def __init__(self, n_size_first: int=-1, n_unique_first: int=5, n_unique_second: int=5, min_unique: int=2):
+        self.n_size_first    = n_size_first
+        self.n_unique_first  = n_unique_first
+        self.n_unique_second = n_unique_second
+        self.min_unique      = min_unique
+        self.dict_convert    = {}
+    def __str__(self):
+        return f'{self.__class__.__name__}(n_size_first: {self.n_size_first}, n_unique_first: {self.n_unique_first}, n_unique_second: {self.n_unique_second}, min_unique: {self.min_unique})'
+    def __call__(self, ndf: np.ndarray):
+        logger.info(f'convert: \n{self.dict_convert}')
+        indexes = list(self.dict_convert.keys())
+        ndfbool = np.zeros(ndf.shape[1]).astype(bool)
+        ndfbool[indexes] = True
+        ndfwk = ndf[:,  ndfbool].copy()
+        ndf   = ndf[:, ~ndfbool]
+        for i, _key in enumerate(indexes):
+            for _, y in self.dict_convert[_key].items():
+                ndfwk[:, i] == y
+                ndf = np.concatenate([ndf, (ndfwk[:, i] == y).reshape(-1, 1)], axis=1)
+        return ndf
+    def fit(self, ndf: np.ndarray):
+        ndf = np.sort(ndf, axis=0)
+        ndfbool = None
+        if self.n_size_first < 1:
+            ndfbool = np.ones(ndf.shape[1]).astype(bool)
+        else:
+            ndfwk    = np.zeros(ndf.shape[1]).astype(int)
+            ndfwk[:] = self.n_unique_first + 1
+            for i in np.arange(ndf.shape[1]):
+                ndfwk[i] = np.unique(ndf[:self.n_size_first, i]).shape[0]
+            ndfbool = (ndfwk < self.n_unique_first) & (ndfwk > self.min_unique)
+        ndfwk    = np.zeros(ndf.shape[1]).astype(int)
+        ndfwk[:] = self.n_unique_second + 1
+        for i in np.where(ndfbool)[0]:
+            ndfwk[i] = np.unique(ndf[:, i]).shape[0]
+        ndfbool = (ndfwk < self.n_unique_second) & (ndfwk > self.min_unique)
+        for i in np.where(ndfbool)[0]:
+            self.dict_convert[i] = {}
+            for j, k in enumerate(np.sort(np.unique(ndf[:, i]))):
+                self.dict_convert[i][j] = k
 
 class MyAsType:
     """ Classを定義しないとpickle化できない """
@@ -284,7 +348,42 @@ class MyReshape:
     def __str__(self):
         return f'{self.__class__.__name__}(convert_shape: {self.convert_shape})'
     def __call__(self, ndf: np.ndarray):
-        ndf = ndf.copy().reshape(*self.convert_shape)
+        reshape = np.array(self.convert_shape).astype(object)
+        reshape[reshape == "shape0"] = ndf.shape[0]
+        reshape[reshape == "shape1"] = ndf.shape[1]
+        reshape = tuple(reshape.astype(int).tolist())
+        ndf = ndf.copy().reshape(*reshape)
+        return ndf
+
+class MySelectIndex:
+    def __init__(self, dim: int, i_shape: int, index: int):
+        self.dim = dim
+        self.i_shape = i_shape
+        self.index = index
+    def __str__(self):
+        return f'{self.__class__.__name__}(dim: {self.dim}, i_shape: {self.i_shape}, index: {self.index})'
+    def __call__(self, ndf: np.ndarray):
+        if   self.dim == 1:
+            if self.i_shape == 0:
+                ndf = ndf[self.index]
+            else:
+                logger.raise_error(f'ndf shape: {ndf.shape} is mismatch !! (dim: {self.dim}, i_shape: {self.i_shape}, index: {self.index})')
+        elif self.dim == 2:
+            if   self.i_shape == 0:
+                ndf = ndf[self.index, :]
+            elif self.i_shape == 1:
+                ndf = ndf[:, self.index]
+            else:
+                logger.raise_error(f'ndf shape: {ndf.shape} is mismatch !! (dim: {self.dim}, i_shape: {self.i_shape}, index: {self.index})')
+        elif self.dim == 3:
+            if   self.i_shape == 0:
+                ndf = ndf[self.index, :, :]
+            elif self.i_shape == 1:
+                ndf = ndf[:, self.index, :]
+            elif self.i_shape == 1:
+                ndf = ndf[:, :, self.index]
+            else:
+                logger.raise_error(f'ndf shape: {ndf.shape} is mismatch !! (dim: {self.dim}, i_shape: {self.i_shape}, index: {self.index})')
         return ndf
 
 class MyDropNa:
@@ -332,6 +431,7 @@ class MyDictMap:
             df[x] = nanmap(df[x], self.dict_values)
         return df
 
+
 class Calibrater:
     """
     CalibratedClassifierCVは交差検証時にValidaionデータでfittingを行う
@@ -360,25 +460,25 @@ class Calibrater:
     def __str__(self):
         return str(self.calibrater)
 
-    def fit(self, X, Y):
+    def fit(self, X, Y, **kwargs):
         """
         ここで入力するXはpredict_proba である. 実際の特徴量ではない点注意
         """
-        self.calibrater.fit(X, Y)
+        self.calibrater.fit(X, Y, **kwargs)
 
-    def predict_proba_mock(self, X):
+    def predict_proba_mock(self, X, **kwargs):
         """
         ここで入力するXはpredict_proba である. 実際の特徴量ではない点注意
         """
         return self.calibrater.predict_proba(X)
 
-    def predict_proba(self, X):
+    def predict_proba(self, X, **kwargs):
         """
         ここで入力するXは実際の特徴量である
         """
         return self.calibrater.predict_proba(self.model.predict_proba(X))
         
-    def predict(self, X):
+    def predict(self, X, **kwargs):
         """
         ここで入力するXは実際の特徴量である
         """

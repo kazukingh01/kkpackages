@@ -9,7 +9,8 @@ from torch.optim.optimizer import Optimizer
 from torch.utils.tensorboard import SummaryWriter
 import torch_optimizer as optim
 # local package
-from kkpackage.util.common import is_callable, correct_dirpath, makedirs
+from kkpackage.util.dataframe import divide_index
+from kkpackage.util.common import is_callable, correct_dirpath, makedirs, check_type
 from kkpackage.util.logger import set_loglevel, set_logger
 logger = set_logger(__name__)
 
@@ -172,6 +173,18 @@ class TorchNN(nn.Module):
                         pass
 
 
+class ResBlock(TorchNN):
+    def forward(self, _input: torch.Tensor, option: str=None):
+        output = super().forward(_input, option=option)
+        output = output + _input
+        return output
+
+
+class Mish(nn.Module):
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        return input * torch.tanh(torch.nn.functional.softplus(input))
+
+
 class EarlyStoppingError(Exception):
     """early stopping の条件を達成した時に発生する例外"""
     pass
@@ -191,7 +204,7 @@ class BaseNN:
         # validation dataset
         dataloader_valids: List[torch.utils.data.DataLoader]=[],
         # train parameter
-        epoch: int=100, batch_size: int=-1, valid_step: int=-1, early_stopping_rounds: int=-1, 
+        epoch: int=100, batch_size: int=-1, valid_step: int=-1, early_stopping_rounds: int=-1, batch_size_valid: int=-1,
         # output
         outdir: str="./output_"+datetime.datetime.now().strftime("%Y%m%d%H%M%S"), save_step: int=None
     ):
@@ -219,6 +232,7 @@ class BaseNN:
         # validation
         self.valid_step = valid_step
         self.early_stopping_rounds = early_stopping_rounds
+        self.batch_size_valid = batch_size_valid
         # Config
         self.is_cuda   = False
         self.epoch     = epoch
@@ -235,6 +249,8 @@ class BaseNN:
         self.save_step = save_step
         # TensorBoard
         self.writer = SummaryWriter(log_dir=self.outdir + "logs")
+        # Check
+        self.check_init()
 
     def __str__(self):
         string = f"""model type     : {self.mtype}
@@ -244,6 +260,10 @@ batch size     : {self.batch_size}
 epoch          : {self.epoch}
 network        : {self.mynn}"""
         return string
+    
+    def check_init(self):
+        if self.mtype not in ["cls", "reg"]:
+            logger.raise_error(f'"mtype" is "cls" or "reg": {self.mtype}')
 
     def initialize(self):
         self.iter      = 0
@@ -257,6 +277,7 @@ network        : {self.mynn}"""
     def to_cuda(self):
         """ GPUの使用をONにする """
         self.mynn.to(torch.device("cuda:0")) # moduleがcudaにのっているかどうかは、next(model.parameters()).is_cuda で確認できる
+        self.loss_funcs = [x.to(torch.device("cuda:0")) for x in self.loss_funcs]
         self.is_cuda = True
 
     def val_to(self, x):
@@ -281,11 +302,13 @@ network        : {self.mynn}"""
     @classmethod
     def process_data_train_pre(cls, _input): return _input
     @classmethod
-    def process_data_train_aft(cls, _input): return _input
+    def process_data_train_aft(cls, _input):
+        return _input if isinstance(_input, list) or isinstance(_input, tuple) else [_input, ]
     @classmethod
     def process_data_valid_pre(cls, _input): return _input
     @classmethod
-    def process_data_valid_aft(cls, _input): return _input
+    def process_data_valid_aft(cls, _input):
+        return _input if isinstance(_input, list) or isinstance(_input, tuple) else [_input, ]
     @classmethod
     def process_label(cls, _input): return _input
 
@@ -310,8 +333,11 @@ network        : {self.mynn}"""
             output = self.process_data_train_aft(output)
         # label proc
         if label is not None:
-            label  = self.process_label(label)
-            label  = self.val_to(label)
+            label = self.process_label(label)
+            if isinstance(label, list) or isinstance(label, tuple):
+                label = [self.val_to(x) for x in label]
+            else:
+                label = [self.val_to(label), ]
         return output, label
     
     def _train(self, _input: object, label: object):
@@ -321,8 +347,8 @@ network        : {self.mynn}"""
         output, label = self.processes(_input, label=label, is_valid=False)
         # loss calculation
         loss, losses = 0, []
-        for loss_func in self.loss_funcs:
-            losses.append(loss_func(output, label))
+        for i, loss_func in enumerate(self.loss_funcs):
+            losses.append(loss_func(output[i], label[i]))
             loss += losses[-1]
         loss.backward()
         self.optimizer.step()
@@ -342,8 +368,8 @@ network        : {self.mynn}"""
             output, label = self.processes(_input, label=label, is_valid=True)
             # loss calculation
             loss_valid, losses_valid = 0, []
-            for loss_func in self.loss_funcs:
-                losses_valid.append(loss_func(output, label))
+            for i, loss_func in enumerate(self.loss_funcs):
+                losses_valid.append(loss_func(output[i], label[i]))
                 loss_valid += losses_valid[-1]
             loss_valid   = float(loss_valid.to("cpu").detach().item())
             losses_valid = [float(_x.to("cpu").detach().item()) for _x in losses_valid]
@@ -372,22 +398,24 @@ network        : {self.mynn}"""
         if self.mtype in ["cls"]:
             self.classes_: np.ndarray = np.sort(np.unique(y_train)).astype(int)
         indexes = np.arange(x_train.shape[0])
-        x_train = self.val_to(torch.from_numpy(x_train))
-        y_train = self.val_to(torch.from_numpy(y_train))
+        x_train = torch.from_numpy(x_train)
+        y_train = torch.from_numpy(y_train)
         if x_valid is not None:
             if isinstance(x_valid, np.ndarray):
-                x_valid = [self.val_to(torch.from_numpy(x_valid))]
-                y_valid = [self.val_to(torch.from_numpy(y_valid))]
+                x_valid = [torch.from_numpy(x_valid)]
+                y_valid = [torch.from_numpy(y_valid)]
             elif isinstance(x_valid, list) or isinstance(x_valid, tuple):
-                x_valid = [self.val_to(torch.from_numpy(_ndf)) for _ndf in x_valid]
-                y_valid = [self.val_to(torch.from_numpy(_ndf)) for _ndf in y_valid]
+                x_valid = [torch.from_numpy(_ndf) for _ndf in x_valid]
+                y_valid = [torch.from_numpy(_ndf) for _ndf in y_valid]
+            indexes_valid = [np.arange(ndf.shape[0]) for ndf in x_valid]
         try:
             for _ in range(self.epoch):
                 _index = np.random.permutation(indexes)[:x_train.shape[0] if self.batch_size <= 0 else self.batch_size]
                 self._train(x_train[_index], y_train[_index])
                 if x_valid is not None and self.valid_step is not None and self.valid_step > 0 and self.iter % self.valid_step == 0:
                     for i, (_x_valid, _y_valid) in enumerate(zip(x_valid, y_valid)):
-                        self._valid(_x_valid, _y_valid, i_valid=i)
+                        _index = np.random.permutation(indexes_valid[i])[:_x_valid.shape[0] if self.batch_size_valid <= 0 else self.batch_size_valid]
+                        self._valid(_x_valid[_index], _y_valid[_index], i_valid=i)
         except EarlyStoppingError:
             logger.warning(f'early stopping. iter: {self.iter}, best_iter: {self.best_params["iter"]}, loss: {self.best_params["loss_valid"]}')
             self.iter_best = self.best_params["iter"]
@@ -415,53 +443,66 @@ network        : {self.mynn}"""
         self.writer.close()
         self.save(is_best=True)
 
-    def predict(self, _x: np.ndarray, _y: np.ndarray=None, bc_threshold: float=0.5):
+    def predict(self, _x: np.ndarray, _y: np.ndarray=None, batch_size: int=-1, out_index: int=0):
         """
         numpy ndarray ベースの predict
+        Params::
+            batch_size: GPUで計算できないサイズが考えられるので分割できるようにしておく
         """
-        _x = self.val_to(torch.from_numpy(_x))
-        if _y is not None: _y = self.val_to(torch.from_numpy(_y))
-        self.mynn.eval()
-        with torch.no_grad():
-            output, label = self.processes(_x, label=_y, is_valid=True)
-        output = output.to("cpu").detach().numpy()
-        if _y is not None: label = label.to("cpu").detach().numpy()
-        if   self.mtype in ["cls"]:
-            if   len(output.shape) == 2 and output.shape[1] == 1:
-                # binary class
-                output = (output > bc_threshold).astype(int).reshape(-1)
-            elif len(output.shape) == 2 and output.shape[1] >  1:
-                # multi class
-                output = np.argmax(output, axis=1)
-            else:
-                logger.raise_error(f"output: {output.shape} is not expected.")
-        elif self.mtype in ["reg"]:
-            if len(output.shape) == 2 and output.shape[1] == 1:
-                # regression で 1次元の場合はreshapeする
-                output = output.reshape(-1)
-            else:
-                pass
+        if not _y:
+            output = self.predict_proba(_x, _y=_y, batch_size=batch_size, out_index=out_index)
+        else:
+            output, label = self.predict_proba(_x, _y=_y, batch_size=batch_size, out_index=out_index)
+        if self.mtype in ["cls"]:
+            output = np.argmax(output, axis=1)
         if _y is None:
             return output
         else:
             return output, label
     
-    def predict_proba(self, _x: np.ndarray):
+    def predict_proba(self, _x: np.ndarray, _y: np.ndarray=None, batch_size: int=-1, out_index: int=0):
         """
         numpy ndarray ベースの predict
         """
         if self.mtype not in ["cls"]: logger.raise_error(f'model type is not cls. {self.mtype}')
-        _x = self.val_to(torch.from_numpy(_x))
+        _x = torch.from_numpy(_x)
+        if _y is not None: _y = torch.from_numpy(_y)
         self.mynn.eval()
+        output, label = None, None
         with torch.no_grad():
-            output, _ = self.processes(_x, label=None, is_valid=True)
-        output = output.to("cpu").detach().numpy()
-        if   len(output.shape) == 2 and output.shape[1] == 1:
-            # binary class
-            output = np.concatenate([1 - output, output], axis=1)
-        elif len(output.shape) == 2 and output.shape[1] >  1:
-            # multi class
-            pass
+            if batch_size > 1:
+                listwk = divide_index(np.arange(_x.shape[0]), n_div=batch_size)
+                output, label = [], []
+                for _index in listwk:
+                    _output, _label = self.processes(_x[_index], label=(None if _y is None else _y[_index]), is_valid=True)
+                    _output = _output[out_index].to("cpu").detach().numpy()
+                    output.append(_output)
+                    if _y is not None:
+                        _label = _label[out_index].to("cpu").detach().numpy()
+                        label.append(_label)
+                output = np.concatenate(output, axis=0)
+                if _y is not None: label = np.concatenate(label, axis=0)
+                else: label = None
+            else:
+                output, label = self.processes(_x, label=_y, is_valid=True)
+                output = output[out_index].to("cpu").detach().numpy()
+                if _y is not None: label = label.to("cpu").detach().numpy()
+        if self.mtype not in ["reg"]:
+            if len(output.shape) == 2 and output.shape[1] == 1:
+                # regression で 1次元の場合はreshapeする
+                output = output.reshape(-1)
+            else:
+                pass
+        elif self.mtype in ["cls"]:
+            if   len(output.shape) == 2 and output.shape[1] == 1:
+                # binary class
+                output = np.concatenate([1 - output, output], axis=1)
+            elif len(output.shape) == 2 and output.shape[1] >  1:
+                # multi class
+                pass
+            else:
+                logger.raise_error(f"output: {output.shape} is not expected.")
+        if _y is None:
+            return output
         else:
-            logger.raise_error(f"output: {output.shape} is not expected.")
-        return output
+            return output, label

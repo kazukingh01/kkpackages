@@ -1,5 +1,6 @@
 import re
 from typing import List
+from functools import partial
 import pandas as pd
 import numpy as np
 import torch
@@ -10,8 +11,10 @@ from joblib import Parallel, delayed
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score, r2_score, mean_squared_error, mean_absolute_error, f1_score
 from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
+from fast_histogram import histogram1d, histogram2d
 
 #  local package
+from kkpackage.util.dataframe import divide_index
 from kkpackage.util.common import is_callable
 from kkpackage.util.logger import set_logger
 logger = set_logger(__name__)
@@ -23,6 +26,21 @@ def sort_each_columns(df: pd.DataFrame, **params) -> pd.DataFrame:
         logger.info(f"sort by:{x}")
         dfret[x] = df[x].copy().sort_values(**params).values
     return dfret
+
+
+def sort_each_columns_parallel(df: pd.DataFrame, n_div: int=1, n_jobs: int=1) -> pd.DataFrame:
+    logger.info("START")
+    logger.info(f"df shape: {df.shape}, n_div:{n_div}, n_jobs:{n_jobs}")
+    _step = df.columns.shape[0] // n_div
+    out_list = Parallel(n_jobs=n_jobs, backend="loky", verbose=10) \
+                    (delayed(sort_each_columns)(df[df.columns[(_i*_step):((_i+1)*_step)]]) for _i in range(n_div+1))
+    ## 並列計算後の結合処理
+    columns_org = df.columns.copy()
+    del df # メモリから消す
+    df_con = pd.concat(out_list, axis=1, ignore_index=False, sort=False)
+    df_con = df_con[columns_org] # 順番を整理する
+    logger.info("END")
+    return df_con
 
 
 def search_features_by_variance(df: pd.DataFrame, cutoff: float=0.99, ignore_nan: bool=False, n_jobs: int = 1) -> np.ndarray:
@@ -37,23 +55,15 @@ def search_features_by_variance(df: pd.DataFrame, cutoff: float=0.99, ignore_nan
         カット後の特徴量リスト
     """
     logger.info("START")
-
+    columns_org = df.columns.copy()
     # まずは各列でsortする。nanは末尾に固まる
     # df.values を行うと、一番大きい型が ndf 全体に適用されるため非常に重い
     # そのため、各列を愚直にループする
     ## ループするのも遅いので並列化する
-    _n_step = (n_jobs if n_jobs > 0 else 10)
-    _step = df.columns.shape[0] // _n_step
-    logger.info(f"parallel calculation, n_jobs:%{n_jobs}, n_step:{_n_step}, step:{_step}")
-    out_list = Parallel(n_jobs=n_jobs, backend="loky", verbose=10) \
-                    (delayed(sort_each_columns)(df[df.columns[(_i*_step):((_i+1)*_step)]]) for _i in range(_n_step+1))
-    ## 並列計算後の結合処理
-    columns_org = df.columns.copy()
     size_df = df.shape[0]
-    df = None # メモリから消す
-    df_con = pd.concat(out_list, axis=1, ignore_index=False, sort=False)
-    df_con = df_con[columns_org] # 順番を整理する
-
+    n_div   = (n_jobs if n_jobs > 0 else 10)
+    df_con  = sort_each_columns_parallel(df, n_div=n_div, n_jobs=n_jobs)
+    del df # メモリから消す
     # 各列でcutoffのデータ数を求める
     sewk = pd.Series(int(df_con.shape[0]), index=df_con.columns.values)
     if ignore_nan == True:
@@ -790,7 +800,7 @@ def predict_detail(model, X, do_estimators: bool=False, n_jobs: int=-1, **pred_p
     if is_callable(model, "predict_proba") == True:
         logger.info("predict probability train dataset.")
         if is_callable(model, "classes_") == False: logger.raise_error(f"model: {model} doesn't have 'classes_' attr !")
-        ndfwk = model.predict_proba(X)
+        ndfwk = model.predict_proba(X, **pred_params)
         for i, label in enumerate(model.classes_.astype(int)):
             df_score["predict_proba_"+str(label)] = ndfwk[:, i]
 
@@ -1385,3 +1395,68 @@ def lgb_custom_eval(y_pred: np.ndarray, data: lgb.Dataset, func_loss, func_name:
         y_pred = y_pred.reshape(n_class, -1).T
     value = func_loss(y_pred, y_true)
     return func_name, np.sum(value), is_higher_better
+
+
+def calc_mutual_information(ndfx: np.ndarray, ndfy: np.ndarray, *args, bins: int=100, base_max: int=1) -> (np.ndarray, np.ndarray):
+    """
+    相互情報量を計算する
+    Params::
+        ndfx, ndfy: 入力は0~base_maxに正規化されているとする
+    """
+    """ DEBUG
+    import numpy as np
+    from fast_histogram import histogram1d, histogram2d
+    x = np.random.rand(1000, 20)
+    y = np.random.rand(1000, 10)
+    ndfx, ndfy, bins, base_max = x, y, 100, 1
+    """
+    logger.info("START")
+    list_ndf = []
+    for x in ndfx.T:
+        for y in ndfy.T:
+            ndf = histogram2d(x, y, range=[[0, base_max], [0, base_max]], bins=bins)
+            ndf = (ndf / ndf.sum()).astype(np.float16)
+            list_ndf.append(ndf.reshape(1, *ndf.shape))
+    ndf_xy  = np.concatenate(list_ndf, axis=0)
+    ndf_x   = np.array([histogram1d(x, range=[0, base_max], bins=bins) for x in ndfx.T]) / ndfx.shape[0]
+    ndf_y   = np.array([histogram1d(x, range=[0, base_max], bins=bins) for x in ndfy.T]) / ndfy.shape[0]
+    ndf_x   = np.tile(np.tile(ndf_x.reshape(-1, bins, 1), bins), (1, ndfy.shape[1], 1)).reshape(-1, bins, bins)
+    ndf_y   = np.tile(np.tile(ndf_y, bins).reshape(-1, bins, bins), (ndfx.shape[1], 1, 1))
+    ndf_x_y = ndf_x * ndf_y
+    elem: np.ma.core.MaskedArray = ndf_xy * np.ma.log(ndf_xy / ndf_x_y)
+    val:  np.ma.core.MaskedArray = np.sum(elem * base_max/bins * base_max/bins, axis=(1,2))
+    val = np.ma.filled(val, 0)
+    index_x = np.tile(np.arange(ndfx.shape[1]).reshape(-1, 1), ndfy.shape[1]).reshape(-1)
+    index_y = np.tile(np.arange(ndfy.shape[1]),                ndfx.shape[1]).reshape(-1)
+    index_list = np.concatenate([[index_x], [index_y]], axis=0).T
+    logger.info("END")
+    return (index_list, val, *args)
+
+
+def calc_parallel_mutual_information(df: pd.DataFrame, n_jobs: int=1, calc_size: int=100, bins: int=100, base_max: int=1):
+    """
+    相互情報量をDataFramebeベースで並列計算する. 
+    DataFrameは正規化されている前提とする. 
+    """
+    n_div     = (df.shape[1] // calc_size) + 1
+    list_cols = divide_index(df.columns.values, n_div=n_div, random=False)
+    ndf_cols  = np.array(list_cols)
+    list_cols = [(i, i+j, cols_x, cols_y, ) for i, cols_x in enumerate(list_cols) for j, cols_y in enumerate(list_cols[i:])]
+    func = partial(calc_mutual_information, bins=bins, base_max=base_max)
+    out_list  = Parallel(n_jobs=n_jobs, backend="loky", verbose=10)(delayed(func)(df[cols_x].values, df[cols_y].values, i, j) for i, j, cols_x, cols_y in list_cols)
+    # index の変換
+    listwk   = []
+    for index_list, val, i, j in out_list:
+        index_x = np.array(ndf_cols[i])
+        index_y = np.array(ndf_cols[j])
+        index_x = index_x[index_list[:, 0]]
+        index_y = index_y[index_list[:, 1]]
+        listwk.append((index_x, index_y, val))
+    index_x = np.concatenate([x for x, _, _ in listwk], axis=0)
+    index_y = np.concatenate([x for _, x, _ in listwk], axis=0)
+    val     = np.concatenate([x for _, _, x in listwk], axis=0)
+    # 値の格納
+    df_mi = pd.DataFrame(np.nan, index=df.columns.values, columns=df.columns.values, dtype=np.float16)
+    for x, y, z in zip(index_x, index_y, val):
+        df_mi.loc[x, y] = z
+    return df_mi
