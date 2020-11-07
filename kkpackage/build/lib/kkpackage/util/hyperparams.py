@@ -269,7 +269,8 @@ def get_optuna_study_from_db(dbpath: str) -> pd.DataFrame:
     if not os.path.exists(dbpath):
         logger.raise_error(f'{dbpath} is not exists.')
     conn = sqlite3.connect(dbpath)
-    df   = pd.read_sql_query("SELECT trial_id, value FROM trials WHERE state = 'COMPLETE'", conn)
+    df   = pd.read_sql_query("SELECT trial_id, datetime_start, datetime_complete, value FROM trials WHERE state = 'COMPLETE'", conn)
+    df["runtime"] = pd.to_datetime(df["datetime_complete"]) - pd.to_datetime(df["datetime_start"])
     """
     >>> df
         trial_id  number  study_id     state         value              datetime_start           datetime_complete

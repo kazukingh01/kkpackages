@@ -11,10 +11,10 @@ from sklearn.metrics import roc_curve, auc
 import matplotlib.pyplot as plt
 
 # local package
-from kkpackage.lib.learning import ProcRegistry, Calibrater, MyReplaceValue, MyAsType, MyReshape, MyDropNa
+from kkpackage.lib.learning import ProcRegistry, Calibrater, MyReplaceValue, MyAsType, MyReshape, MyDropNa, MyMinMaxScaler
 from kkpackage.util.learning import search_features_by_variance, search_features_by_correlation, \
     split_data_balance, predict_detail, evalate, eval_classification_model, eval_regressor_model, \
-    is_classification_model, conv_validdata_in_fitparmas, calc_randomtree_importance
+    is_classification_model, conv_validdata_in_fitparmas, calc_randomtree_importance, calc_parallel_mutual_information
 from kkpackage.util.hyperparams import search_hyperparams_by_optuna
 from kkpackage.util.dataframe import conv_ndarray
 from kkpackage.util.common import is_callable, correct_dirpath, makedirs, save_pickle, load_pickle
@@ -42,7 +42,7 @@ class MyModel:
         self.n_jobs      = n_jobs
         self.colname_explain       = conv_ndarray(colname_explain)
         self.colname_explain_hist  = []
-        self.colname_answer        = conv_ndarray([colname_answer]) if isinstance(colname_answer, str) else colname_answer
+        self.colname_answer        = conv_ndarray([colname_answer]) if isinstance(colname_answer, str) else conv_ndarray(colname_answer)
         self.colname_other         = conv_ndarray(colname_other) if colname_other is not None else np.array([])
         self.df_correlation                     = pd.DataFrame()
         self.df_feature_importances             = pd.DataFrame()
@@ -186,6 +186,24 @@ class MyModel:
             alive_features, cut_features = self.features_by_random_tree_importance(cut_ratio)
             self.update_features(cut_features, alive_features=alive_features) # 特徴量の更新
         self.logger.info("END")
+    
+
+    def cut_features_by_mutual_information(self, df: pd.DataFrame, calc_size: int=50, bins: int=10, base_max: int=1):
+        self.logger.info("START")
+        proc = ProcRegistry(self.colname_explain, self.colname_answer)
+        proc.register(
+            [
+                MyAsType(np.float16),
+                MyReplaceValue(float( "inf"), float("nan")), 
+                MyReplaceValue(float("-inf"), float("nan")),
+                MyMinMaxScaler(feature_range=(0, base_max - (1./bins/10.))),
+            ], type_proc="x"
+        )
+        proc.fit(df)
+        ndf_x, _ = proc(df, autofix=True, x_proc=True, y_proc=False, row_proc=False)
+        df    = pd.DataFrame(ndf_x, columns=self.colname_explain)
+        self.df_mutual_information = calc_parallel_mutual_information(df, n_jobs=self.n_jobs, calc_size=calc_size, bins=bins, base_max=base_max)
+        self.logger.info("END")
 
 
     def features_by_correlation(self, cutoff: float) -> (np.ndarray, np.ndarray):
@@ -218,7 +236,7 @@ class MyModel:
         cut_list       = self.df_feature_importances_randomtrees.iloc[ -1*_n:]["feature_name"].values.copy()
         self.logger.info("END")
         return alive_features, cut_list
-
+    
 
     def set_default_proc(self, df: pd.DataFrame):
         self.preproc.register(
@@ -856,11 +874,15 @@ class MyModel:
             if len(X_test) == 1: X_test = X_test[0]
             if len(Y_test) == 1: Y_test = Y_test[0]
         # データの数を変えながら探索する
-        self.optuna: optuna.study.Study = optuna.create_study(
-            study_name='optuna_'+datetime.datetime.now().strftime("%Y%m%d%H%M%S"),
-            storage='sqlite:///optuna_'+datetime.datetime.now().strftime("%Y%m%d%H%M%S")+'.db' if not storage else storage, 
-            load_if_exists=False if not storage else True
-        )
+        if not storage:
+            self.optuna: optuna.study.Study = optuna.create_study(
+                study_name='optuna_'+datetime.datetime.now().strftime("%Y%m%d%H%M%S"),
+                storage='sqlite:///optuna_'+datetime.datetime.now().strftime("%Y%m%d%H%M%S")+'.db',
+            )
+        else:
+            self.optuna: optuna.study.Study = optuna.load_study(
+                study_name='optuna_'+storage.split(".")[-2].split("_")[-1], storage=storage
+            )
         df_optuna, best_params = search_hyperparams_by_optuna(
             self.optuna, self.model, X, Y, n_trials=n_trials, iters=iters, X_test=X_test, Y_test=Y_test, dict_param=dict_param, 
             tuning_eval=tuning_eval, split_params=split_params, fit_params=fit_params, eval_params=eval_params, n_jobs=self.n_jobs
