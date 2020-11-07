@@ -5,4 +5,5 @@ my package repository
 ```bash
 pip install "git+https://github.com/kazukingh01/kkpackages.git#egg=kkimagemods&subdirectory=kkimagemods/"
 pip install "git+https://github.com/kazukingh01/kkpackages.git#egg=kkdetectron2&subdirectory=kkdetectron2/"
+pip install "git+https://github.com/kazukingh01/kkpackages.git@dev#egg=kkpackage&subdirectory=kkpackage/"
 ```
