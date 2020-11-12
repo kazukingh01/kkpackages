@@ -155,9 +155,9 @@ class MyModel:
         self.logger.info("START")
         self.logger.info(f"df shape:{df.shape}, cutoff:{cutoff}, ignore_nan_mode:{ignore_nan_mode}")
         self.logger.info(f"features:{self.colname_explain.shape}")
-        df = self.preproc(df[self.colname_explain], x_proc=False, y_proc=False, row_proc=True)
+        df = self.preproc(df, x_proc=False, y_proc=False, row_proc=True)
         df_corr, _ = search_features_by_correlation(
-            df, cutoff=cutoff, ignore_nan_mode=ignore_nan_mode, 
+            df[self.colname_explain], cutoff=cutoff, ignore_nan_mode=ignore_nan_mode, 
             n_div_col=n_div_col, on_gpu_size=on_gpu_size, min_n_not_nan=min_n_not_nan, n_jobs=self.n_jobs
         )
         self.df_correlation = df_corr.copy()
@@ -174,6 +174,7 @@ class MyModel:
         if calc_randomtrees:
             if df is None: self.logger.raise_error("dataframe is None !!")
             if self.colname_answer.shape[0] > 1: self.logger.raise_error(f"answer has over 1 columns. {self.colname_answer}")
+            df = self.preproc(df, x_proc=False, y_proc=False, row_proc=True)
             self.df_feature_importances_randomtrees = calc_randomtree_importance(
                 df, colname_explain=self.colname_explain, colname_answer=self.colname_answer[0], 
                 is_cls_model=self.is_classification_model(), n_jobs=self.n_jobs, **kwargs
@@ -191,6 +192,7 @@ class MyModel:
 
     def cut_features_by_mutual_information(self, df: pd.DataFrame, calc_size: int=50, bins: int=10, base_max: int=1):
         self.logger.info("START")
+        df = self.preproc(df, x_proc=False, y_proc=False, row_proc=True)
         proc = ProcRegistry(self.colname_explain, self.colname_answer)
         proc.register(
             [
@@ -202,7 +204,7 @@ class MyModel:
         )
         proc.fit(df)
         ndf_x, _ = proc(df, autofix=True, x_proc=True, y_proc=False, row_proc=False)
-        df    = pd.DataFrame(ndf_x, columns=self.colname_explain)
+        df       = pd.DataFrame(ndf_x, columns=self.colname_explain)
         self.df_mutual_information = calc_parallel_mutual_information(df, n_jobs=self.n_jobs, calc_size=calc_size, bins=bins, base_max=base_max)
         self.logger.info("END")
 
@@ -546,8 +548,8 @@ class MyModel:
         if model is None: model = ExtraTreesClassifier(n_estimators=n_estimators, n_jobs=self.n_jobs)
         self.logger.info(f'model: \n{model}')
         # numpyに変換(前処理の結果を反映する
-        X_train, Y_train = self.preproc(df_train, autofix=True, y_proc=use_answer)
-        X_test,  Y_test  = self.preproc(df_test,  autofix=True, y_proc=use_answer)
+        X_train, Y_train = self.preproc(df_train, autofix=True, y_proc=use_answer, x_proc=True, row_proc=True)
+        X_test,  Y_test  = self.preproc(df_test,  autofix=True, y_proc=use_answer, x_proc=True, row_proc=True)
         if use_answer:
             # データをくっつける(正解ラベルも使う)
             X_train = np.concatenate([X_train, Y_train.reshape(-1).reshape(-1, 1)], axis=1).astype(X_train.dtype) #X_trainの型でCASTする
@@ -644,7 +646,7 @@ class MyModel:
         self.logger.info("END")
 
 
-    def predict(self, df: pd.DataFrame=None, _X: np.ndarray=None, _Y: np.ndarray=None, pred_params={"do_estimators":False}):
+    def predict(self, df: pd.DataFrame=None, _X: np.ndarray=None, _Y: np.ndarray=None, pred_params={"do_estimators":False}, row_proc: bool=True):
         """
         モデルの予測
         Params::
@@ -671,7 +673,7 @@ class MyModel:
         # 前処理の結果を反映する
         X = None
         if _X is None:
-            X, _ = self.preproc(df, x_proc=True, y_proc=False, row_proc=False)
+            X, _ = self.preproc(df, x_proc=True, y_proc=False, row_proc=row_proc)
             if len(X) == 1: X = X[0] #_addがなければ元に戻す
         else:
             # numpy変換処理での遅延を避けるため、引数でも指定できるようにする
@@ -689,8 +691,8 @@ class MyModel:
 
         try:
             Y = None
-            if _Y is None:
-                _, Y = self.preproc(df, x_proc=False, y_proc=True, row_proc=False)
+            if _Y is None and df is not None:
+                _, Y = self.preproc(df, x_proc=False, y_proc=True, row_proc=row_proc)
                 if len(Y) == 1: Y = Y[0] #_addがなければ元に戻す
             else:
                 # numpy変換処理での遅延を避けるため、引数でも指定できるようにする
@@ -709,7 +711,7 @@ class MyModel:
     # テストデータでの検証. 結果は上位に返却
     def predict_testdata(
             self, df_test, store_eval=False, eval_params={"n_round":3, "eval_auc_list":[]},
-            pred_params={"do_estimators":False}
+            pred_params={"do_estimators":False}, row_proc: bool=True
         ):
         """
         テストデータを予測し、評価する
@@ -722,7 +724,7 @@ class MyModel:
         eval_params  = eval_params.copy()
         pred_params  = pred_params.copy()
         # 予測する
-        df_score = self.predict(df=df_test, pred_params=pred_params)
+        df_score = self.predict(df=df_test, pred_params=pred_params, row_proc=row_proc)
         df_score["i_split"] = 0
         for x in self.colname_other: df_score["other_"+x] = df_test[x].values
         self.df_pred_test = df_score.copy()
