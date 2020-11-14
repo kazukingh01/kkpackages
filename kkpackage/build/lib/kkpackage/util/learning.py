@@ -1311,7 +1311,7 @@ def focal_loss(x: np.ndarray, t: np.ndarray, gamma: float=1) -> np.ndarray:
     if len(x.shape) > 1:
         x = softmax(x) # softmax で確率化
         t = np.identity(x.shape[1])[t]
-        return -1 * t * (1 - x)**gamma * np.log(x)        
+        return -1 * t * (1 - x)**gamma * np.log(x)
     else:
         x = sigmoid(x)
         x[t == 0] = 1 - x[t == 0] # 0ラベル箇所は確率を反転する
@@ -1372,15 +1372,12 @@ def lgb_custom_objective(y_pred: np.ndarray, data: lgb.Dataset, func_loss, is_lg
         y_pred = data
     else:
         y_true = data.label
+        if is_callable(data, "ndf_label"):
+            y_true = data.get_culstom_label(y_true.astype(int))
     if y_pred.shape[0] != y_true.shape[0]:
         # multi class の場合
-        n_class = int(y_pred.shape[0] / y_true.shape[0])
-        y_pred = y_pred.reshape(n_class, -1).T
-    logger.debug(f"y_pred: {y_pred}")
-    logger.debug(f"y_true: {y_true}")
+        y_pred = y_pred.reshape(-1 , y_true.shape[0]).T
     grad, hess = func_loss(y_pred, y_true)
-    logger.debug(f"grad: {grad}")
-    logger.debug(f"hess: {hess}")
     return grad.T.reshape(-1), hess.T.reshape(-1)
 
 
@@ -1400,14 +1397,14 @@ def lgb_custom_eval(y_pred: np.ndarray, data: lgb.Dataset, func_loss, func_name:
         y_true = y_pred.copy()
         y_pred = data
     else:
-        y_true  = data.label
-    n_class = 1
+        y_true = data.label
+        if is_callable(data, "ndf_label"):
+            y_true = data.get_culstom_label(y_true.astype(int))
     if y_pred.shape[0] != y_true.shape[0]:
         # multi class の場合
-        n_class = int(y_pred.shape[0] / y_true.shape[0])
-        y_pred = y_pred.reshape(n_class, -1).T
+        y_pred = y_pred.reshape(-1 , y_true.shape[0]).T
     value = func_loss(y_pred, y_true)
-    return func_name, np.sum(value), is_higher_better
+    return func_name, np.mean(value), is_higher_better
 
 
 def calc_mutual_information(ndfx: np.ndarray, ndfy: np.ndarray, *args, bins: int=100, base_max: int=1) -> (np.ndarray, np.ndarray):

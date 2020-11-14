@@ -1,12 +1,12 @@
 import numpy as np
 import pandas as pd
 from typing import List
-from sklearn.preprocessing import MinMaxScaler, StandardScaler, OneHotEncoder
+from sklearn.preprocessing import MinMaxScaler, StandardScaler, OneHotEncoder, QuantileTransformer
 from sklearn.decomposition import PCA
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 
 # local package
-from kkpackage.util.dataframe import nanmap
+from kkpackage.util.dataframe import nanmap, conv_ndarray
 from kkpackage.util.common import check_type, is_callable
 from kkpackage.util.logger import set_logger
 logger = set_logger(__name__)
@@ -135,7 +135,18 @@ class ProcRegistry(object):
         登録した処理に関するパラメータを学習するため、入力データを基準にfittingさせる
         """
         logger.info("START")
-        df = self.proc_row(df) # row proc
+        df = df.copy()
+        for name in self.processing.keys():
+            if self.processing[name]["type"] not in ["row"]: continue
+            logger.info(f'name: {name}, type: {self.processing[name]["type"]}')
+            for _proc in self.processing[name]["proc"]:
+                logger.info(f'proc: {_proc}')
+                logger.info(f"before shape: {df.shape}")
+                if is_callable(_proc, "fit"):
+                    # Fitting
+                    _proc.fit(df)
+                df = _proc(df)
+                logger.info(f"after  shape: {df.shape}")
         for name in self.processing.keys():
             if self.processing[name]["type"] not in ["x", "y"]: continue
             logger.info(f'name: {name}, type: {self.processing[name]["type"]}')
@@ -165,6 +176,29 @@ class MyStandardScaler(StandardScaler):
     def __str__(self): return self.__class__.__name__
     def __call__(self, ndf: np.ndarray):
         return self.transform(ndf)
+
+class MyRankGauss(QuantileTransformer):
+    """ output_distribution='normal' とすれば Gauss分布に変換. uniform は一様分布"""
+    def __init__(self, *args, columns: np.ndarray=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.columns = conv_ndarray(columns) if columns is not None else None
+    def __str__(self): return f'{self.__class__.__name__}(columns: {self.columns})'
+    def __call__(self, ndf: np.ndarray):
+        if self.columns is None and isinstance(ndf, np.ndarray):
+            return self.transform(ndf)
+        elif isinstance(self.columns, np.ndarray) and isinstance(ndf, pd.DataFrame):
+            ndf[self.columns] = self.transform(ndf[self.columns].values.copy())
+            return ndf
+        else:
+            logger.raise_error(f'input is not expected type. {self.columns}, {ndf}')
+    def fit(self, X, **kwargs):
+        if self.columns is None and isinstance(X, np.ndarray):
+            super().fit(X, **kwargs)
+        elif isinstance(self.columns, np.ndarray) and isinstance(X, pd.DataFrame):
+            super().fit(X[self.columns].values, **kwargs)
+        else:
+            logger.raise_error(f'input is not expected type. {self.columns}, {X}')
+
 
 class MyPCA(object):
     def __init__(self, pca_cutoff: float=0.99):
