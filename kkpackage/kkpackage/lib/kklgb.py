@@ -1,7 +1,7 @@
 from sklearn.exceptions import NotFittedError
 from typing import List
 from lightgbm import LGBMClassifier, LGBMRegressor, LGBMModel
-from lightgbm.callback import record_evaluation, EarlyStopException
+from lightgbm.callback import record_evaluation, EarlyStopException, _format_eval_result
 
 # local package
 from kkpackage.util.learning import softmax, sigmoid
@@ -38,6 +38,7 @@ class KkLGBMModelBase(LGBMModel):
         if kwargs.get("callbacks") is None:
             kwargs["callbacks"] = [
                 record_evaluation(self.dict_eval),
+                self.print_evaluation(logger),
                 self.callback_best_iter(self.dict_eval_best, kwargs.get("early_stopping_rounds"), logger)
             ]
             if self.save_interval is not None: kwargs["callbacks"].append(self.callback_model_save(self.save_interval))
@@ -51,6 +52,7 @@ class KkLGBMModelBase(LGBMModel):
                 kwargs["init_model"] = f"./model_{base_step}.txt"
                 kwargs["callbacks"]  = [
                     record_evaluation(self.dict_eval), 
+                    self.print_evaluation(logger),
                     self.callback_best_iter(self.dict_eval_best, kwargs.get("early_stopping_rounds"), logger),
                     self.callback_lr_schedule([base_step], lr_decay=0.2)
                 ]
@@ -113,6 +115,16 @@ class KkLGBMModelBase(LGBMModel):
                 env.params.update(dictwk)
         _callback.before_iteration = True
         _callback.order = 100
+        return _callback
+
+
+    @classmethod
+    def print_evaluation(cls, logger: MyLogger, period=1, show_stdv=True):
+        def _callback(env):
+            if period > 0 and env.evaluation_result_list and (env.iteration + 1) % period == 0:
+                result = '\t'.join([_format_eval_result(x, show_stdv) for x in env.evaluation_result_list])
+                logger.info('[%d]\t%s' % (env.iteration + 1, result))
+        _callback.order = 10
         return _callback
 
 

@@ -1153,7 +1153,7 @@ def calc_randomtree_importance(
 ## df_train に上書きする
 def create_features_by_basic_method(
         df: pd.DataFrame, colname_group: str, colname_group_regex, replace_inf: np.float=np.nan,
-        calc_list=["sum","mean","std","max","min","rank","diff","ratio"]
+        calc_list=["sum","mean","std","max","min","rank","log","diff","ratio"]
     ) -> pd.DataFrame:
     """
     あるグループ間での特徴量を作成する
@@ -1163,14 +1163,19 @@ def create_features_by_basic_method(
         colname_group_regex: カラム名を選択する正規表現かリスト
         calc_list: 新規の特徴量作成の種類のリスト["sum","mean","std","max","min","rank","diff","ratio"]
     """
+    logger.info("START")
     # 特徴量作成するグループ項目の定義
     colname_org = np.empty(0)
-    if type(colname_group_regex) == str:
-        colname_org = df.columns[df.columns.str.contains(colname_group_regex, regex=True)].values
-    elif type(colname_group_regex) == list:
-        for x in colname_group_regex:
-            _colname_wk = df.columns[df.columns.str.contains(x, regex=True)].values
-            colname_org = np.append(colname_org, _colname_wk)
+    if colname_group_regex is None:
+        logger.warning(f"all columns is target of new features. columns: {df.columns}")
+        colname_org = df.columns.values
+    else:
+        if type(colname_group_regex) == str:
+            colname_org = df.columns[df.columns.str.contains(colname_group_regex, regex=True)].values
+        elif type(colname_group_regex) == list:
+            for x in colname_group_regex:
+                _colname_wk = df.columns[df.columns.str.contains(x, regex=True)].values
+                colname_org = np.append(colname_org, _colname_wk)
 
     # あるグループだけの特徴量でDFを定義する
     df = df[colname_org].copy()
@@ -1182,10 +1187,17 @@ def create_features_by_basic_method(
     if "max"  in calc_list: df[colname_group + "_max"]  = df[colname_org].max(axis=1)
     if "min"  in calc_list: df[colname_group + "_min"]  = df[colname_org].min(axis=1)
 
+    # log
+    if "log"  in calc_list:
+        dfwk = df[colname_org].apply(lambda x: np.log(x))
+        for x in dfwk.columns:
+            df[colname_group+"_"+x+"_log"] = dfwk[x].copy()
+
     # ランキングする
-    dfwk = df[colname_org].rank(axis=1) #, method='first'
-    for x in dfwk.columns:
-        if "rank" in calc_list: df[colname_group+"_"+x+"_rank"] = dfwk[x]
+    if "rank" in calc_list:
+        dfwk = df[colname_org].rank(axis=1) #, method='first'
+        for x in dfwk.columns:
+            df[colname_group+"_"+x+"_rank"] = dfwk[x].copy()
 
     # 各項目間の差・比率を計算する
     for i, x in enumerate(colname_org):
@@ -1243,6 +1255,7 @@ def create_features_by_basic_method(
     if colname_bool.sum() > 0:
         df_ret[colname_add[colname_bool]] = df[colname_add[colname_bool]].astype(np.float16)
     
+    logger.info("END")
     return df_ret
     
 
