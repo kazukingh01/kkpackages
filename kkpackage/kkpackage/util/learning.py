@@ -1057,7 +1057,7 @@ def conv_validdata_in_fitparmas(fit_params, validation_x, validation_y):
 
 
 def calc_randomtree_importance(
-        df: pd.DataFrame, colname_explain: np.ndarray, colname_answer: str, 
+        X: np.ndarray, Y: np.ndarray, colname_explain: np.ndarray, 
         is_cls_model: bool=True, n_estimators: int=100, cnt_thre: int=40, n_jobs: int=1
     ) -> pd.DataFrame:
     """
@@ -1065,35 +1065,17 @@ def calc_randomtree_importance(
     Return::
         DataFrame. "feature_name","importance","std","count"
     Params::
-        df: input
+        X: input
+        Y: 正解ラベル
         colname_explain: 特徴量
-        colname_answer: 正解ラベル
         is_cls_model: モデルが分類かどうか
         n_estimators: 弱学習機の数
         cnt_thre: 各決定木に使われた特徴量の数の中央値がこの値を超えると計算を終える
         n_jobs: 並列数
     """
     logger.info("START")
-    logger.info(f"input:{df.shape}, colname_explain: {colname_explain}, colname_answer: {colname_answer}")
-    # 正解ラベルを先に退避
-    sewk = df[colname_answer].copy()
+    logger.info(f"input:{X.shape}, answer:{Y.shape}, colname_explain: {colname_explain}")
 
-    # nanを最初に各特徴量毎の最小値と最大値のランダムで埋める
-    df = df[colname_explain].astype(np.float32)
-    df = df.replace(np.inf, np.nan).replace(-1*np.inf, np.nan) #infは先に変換
-    ndfwk = np.random.permutation(np.arange(df.shape[0]))
-    ndfwk1, ndfwk2 = ndfwk[:ndfwk.shape[0]//2], ndfwk[ndfwk.shape[0]//2:]
-    dfwk1 = df.apply(lambda x: x.fillna(x.min() - 2)).iloc[ndfwk1] #各特長量毎の最小値-2で埋める
-    dfwk2 = df.apply(lambda x: x.fillna(x.max() + 2)).iloc[ndfwk2] #各特長量毎の最大値+2で埋める
-    df = pd.concat([dfwk1, dfwk2], axis=0, sort=False, ignore_index=False) #maxとminをブレンドする
-    dfwk1, dfwk2 = None, None # メモリの節約
-    df = df.fillna(0) #それでも埋まらないnan(つまり、列の全てがnan値)は0埋めする
-    
-    # 学習用のndf
-    X, Y = df.values, None # ここで新規にfitさせるため、前処理の反映などは必要ない
-    if is_cls_model: Y = sewk.loc[df.index].astype(np.int32).values
-    else:            Y = sewk.loc[df.index].astype(np.float32).values
-        
     # 特徴量スコア格納用DF
     df_features_cnt = pd.DataFrame(columns=colname_explain.copy())
     df_features_imp = pd.DataFrame(columns=colname_explain.copy())
@@ -1153,7 +1135,7 @@ def calc_randomtree_importance(
 ## df_train に上書きする
 def create_features_by_basic_method(
         df: pd.DataFrame, colname_group: str, colname_group_regex, replace_inf: np.float=np.nan,
-        calc_list=["sum","mean","std","max","min","rank","log","diff","ratio"]
+        calc_list=["sum","mean","std","max","min","rank","diff","ratio"],
     ) -> pd.DataFrame:
     """
     あるグループ間での特徴量を作成する
@@ -1186,12 +1168,6 @@ def create_features_by_basic_method(
     if "std"  in calc_list: df[colname_group + "_std"]  = df[colname_org].std(axis=1)
     if "max"  in calc_list: df[colname_group + "_max"]  = df[colname_org].max(axis=1)
     if "min"  in calc_list: df[colname_group + "_min"]  = df[colname_org].min(axis=1)
-
-    # log
-    if "log"  in calc_list:
-        dfwk = df[colname_org].apply(lambda x: np.log(x))
-        for x in dfwk.columns:
-            df[colname_group+"_"+x+"_log"] = dfwk[x].copy()
 
     # ランキングする
     if "rank" in calc_list:
