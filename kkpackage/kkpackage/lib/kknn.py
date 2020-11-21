@@ -149,28 +149,40 @@ class TorchNN(nn.Module):
         return output
 
 
+    @classmethod
+    def _reset_parameters(cls, module, weight: float=None):
+        try:
+            module.reset_parameters()
+        except AttributeError:
+            pass
+        if weight is None: pass
+        elif isinstance(weight, str) and weight == "norm":
+            if is_callable(module, "weight"):
+                torch.nn.utils.weight_norm(module, "weight")
+            if is_callable(module, "bias"):
+                torch.nn.utils.weight_norm(module, "bias")
+        else:
+            try:
+                module.weight.data.fill_(weight)
+            except AttributeError:
+                pass
+            try:
+                module.bias.data.fill_(weight)
+            except AttributeError:
+                pass
+
+
     def reset_parameters(self, weight: float=None):
         """
         Params::
             weight: float or str. string で "random" の場合は reset_parameters() を呼び出す
+                norm: weght normalization という手法. 
         """
-        # 重みの初期化
-        for name, _ in self.named_modules():
+        for name, module in self.named_modules():
             if name != "":
-                if weight is None:
-                    try:
-                        self.__getattr__(name).reset_parameters()
-                    except AttributeError:
-                        pass
-                else:
-                    try:
-                        self.__getattr__(name).weight.data.fill_(weight)
-                    except AttributeError:
-                        pass
-                    try:
-                        self.__getattr__(name).bias.data.fill_(weight)
-                    except AttributeError:
-                        pass
+                if isinstance(module, TorchNN): continue
+                logger.info(f"reset params: {name}")
+                self._reset_parameters(module, weight=weight)
 
 
 class ResBlock(TorchNN):
@@ -196,7 +208,7 @@ class BaseNN:
         # network
         mynn: nn.Module, mtype: str,
         # loss functions
-        loss_funcs: List[List[object]], loss_funcs_valid: List[List[object]]=None,
+        loss_funcs: List[List[object]]=None, loss_funcs_valid: List[List[object]]=None,
         # optimizer
         optimizer: Optimizer=torch.optim.SGD, optim_dict: dict={"lr":0.001, "weight_decay":0},
         scheduler: _LRScheduler=None ,scheduler_dict: dict=None,
@@ -223,9 +235,9 @@ class BaseNN:
         self.mynn  = mynn
         self.mtype = mtype
         # Loss
-        check_list_depth(loss_funcs, 2)
+        if loss_funcs is not None: check_list_depth(loss_funcs, 2)
         if loss_funcs_valid is not None: check_list_depth(loss_funcs_valid, 2)
-        self.loss_funcs       = loss_funcs
+        self.loss_funcs       = loss_funcs if loss_funcs is not None else [[]]
         self.loss_funcs_valid = loss_funcs_valid if loss_funcs_valid is not None else loss_funcs
         # Optimizer
         self.optimizer = optimizer(self.mynn.parameters(), **optim_dict)
@@ -276,14 +288,14 @@ network              : {self.mynn}"""
         if self.mtype not in ["cls", "reg"]:
             logger.raise_error(f'"mtype" is "cls" or "reg": {self.mtype}')
 
-    def initialize(self):
+    def initialize(self, weight: float=None):
         self.iter      = 0
         self.iter_best = self.epoch
         self.classes_: np.ndarray = None
         self.min_loss  = float("inf")
         self.early_stopping_iter = 0
         self.best_params = {}
-        self.mynn.reset_parameters()
+        self.mynn.reset_parameters(weight=weight)
         self.optimizer = self.optimizer_class(self.mynn.parameters(), **self.optimizer_dict)
         self.scheduler = self.scheduler_class(self.optimizer , **self.scheduler_dict) if self.scheduler_class is not None else None
 
@@ -411,7 +423,6 @@ network              : {self.mynn}"""
         """
         numpy ndarray ベースの train
         """
-        self.initialize()
         if self.mtype in ["cls"]:
             self.classes_: np.ndarray = np.sort(np.unique(y_train)).astype(int)
         indexes = np.arange(x_train.shape[0])
@@ -443,7 +454,6 @@ network              : {self.mynn}"""
         """
         dataloader を使う場合はこっち
         """
-        self.initialize()
         try:
             for _ in range(self.epoch):
                 for _input, label in self.dataloader_train:

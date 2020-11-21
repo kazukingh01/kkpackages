@@ -11,7 +11,7 @@ from sklearn.metrics import roc_curve, auc
 import matplotlib.pyplot as plt
 
 # local package
-from kkpackage.lib.learning import ProcRegistry, Calibrater, MyReplaceValue, MyAsType, MyReshape, MyDropNa, MyMinMaxScaler
+from kkpackage.lib.learning import ProcRegistry, Calibrater, MyReplaceValue, MyAsType, MyReshape, MyDropNa, MyMinMaxScaler, MyFillNaMinMax
 from kkpackage.util.learning import search_features_by_variance, search_features_by_correlation, \
     split_data_balance, predict_detail, evalate, eval_classification_model, eval_regressor_model, \
     is_classification_model, conv_validdata_in_fitparmas, calc_randomtree_importance, calc_parallel_mutual_information
@@ -166,17 +166,34 @@ class MyModel:
         self.logger.info("END")
 
 
-    def cut_features_by_random_tree_importance(self, df: pd.DataFrame=None, cut_ratio: float=0, sort: bool=True, calc_randomtrees: bool=False, **kwargs):
+    def cut_features_by_random_tree_importance(
+        self, df: pd.DataFrame=None, cut_ratio: float=0, sort: bool=True, calc_randomtrees: bool=False, **kwargs
+    ):
         self.logger.info("START")
         self.logger.info("cut_ratio:%s", cut_ratio)
         if self.model is None:
             self.logger.raise_error("model is not set !!")
         if calc_randomtrees:
             if df is None: self.logger.raise_error("dataframe is None !!")
-            if self.colname_answer.shape[0] > 1: self.logger.raise_error(f"answer has over 1 columns. {self.colname_answer}")
-            df = self.preproc(df, x_proc=False, y_proc=False, row_proc=True)
+            df   = self.preproc(df, x_proc=False, y_proc=False, row_proc=True)
+            proc = ProcRegistry(self.colname_explain, self.colname_answer)
+            proc.register(
+                [
+                    MyAsType(np.float32),
+                    MyReplaceValue(float( "inf"), float("nan")), 
+                    MyReplaceValue(float("-inf"), float("nan")),
+                    MyFillNaMinMax(),
+                ], type_proc="x"
+            )
+            proc.register(
+                [
+                    MyAsType(np.int32),
+                ], type_proc="y"
+            )
+            proc.fit(df)
+            X, Y = proc(df, autofix=True, x_proc=True, y_proc=True, row_proc=True)
             self.df_feature_importances_randomtrees = calc_randomtree_importance(
-                df, colname_explain=self.colname_explain, colname_answer=self.colname_answer[0], 
+                X, Y, colname_explain=self.colname_explain, 
                 is_cls_model=self.is_classification_model(), n_jobs=self.n_jobs, **kwargs
             )
         if sort:
@@ -927,6 +944,7 @@ class MyModel:
                 0 : 全て保存
                 1 : 全体のpickleだけ保存
                 2 : 全体のpickle以外を保存
+                3 : 最低限のデータのみをpickleだけ保存
         """
         self.logger.info("START")
         dir_path = correct_dirpath(dir_path)
@@ -966,9 +984,23 @@ class MyModel:
             self.df_cm_test.to_csv( dir_path + self.name + ".eval_test_confusion_matrix.csv", encoding="shift-jis")
         # 全データの保存
         if mode in [0,1]:
-            ## 不要なデータを削除する
-            self.fig = {}
             save_pickle(self, dir_path + self.name + ".pickle")
+        if mode in [3]:
+            ## 重いデータを削除する
+            self.fig = {}
+            self.df_correlation                     = pd.DataFrame()
+            self.df_feature_importances             = pd.DataFrame()
+            self.df_feature_importances_randomtrees = pd.DataFrame()
+            self.df_feature_importances_modeling    = pd.DataFrame()
+            self.df_adversarial_valid               = pd.DataFrame()
+            self.df_adversarial_importances         = pd.DataFrame()
+            self.df_pred_train = pd.DataFrame()
+            self.df_pred_valid = pd.DataFrame()
+            self.df_pred_test  = pd.DataFrame()
+            self.df_cm_train   = pd.DataFrame()
+            self.df_cm_valid   = pd.DataFrame()
+            self.df_cm_test    = pd.DataFrame()
+            save_pickle(self, dir_path + self.name + ".min.pickle")
         self.logger.info("END")
 
 

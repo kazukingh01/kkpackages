@@ -128,3 +128,14 @@ def conv_str_auto(string):
 
 def basename_url(url: str) -> str:
     return url[url.rfind("/")+1:]
+
+def check_list_depth(target: object, depth: int, check_type: type=list):
+    if isinstance(target, check_type):
+        for _ in range(depth):
+            try:
+                target[0]
+                target = target[0]
+            except IndexError:
+                raise Exception(f'target: {target} is not depth: {depth}')
+    else:
+        raise Exception(f'target: {target} is not type: {check_type}')

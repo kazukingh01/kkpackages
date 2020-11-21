@@ -6,10 +6,11 @@ import numpy as np
 import torch
 from torch import nn
 from torch.optim.optimizer import Optimizer
+from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.tensorboard import SummaryWriter
 # local package
 from kkpackage.util.dataframe import divide_index
-from kkpackage.util.common import is_callable, correct_dirpath, makedirs, check_type
+from kkpackage.util.common import is_callable, correct_dirpath, makedirs, check_type, check_list_depth
 from kkpackage.util.logger import set_loglevel, set_logger
 logger = set_logger(__name__)
 
@@ -148,28 +149,40 @@ class TorchNN(nn.Module):
         return output
 
 
+    @classmethod
+    def _reset_parameters(cls, module, weight: float=None):
+        try:
+            module.reset_parameters()
+        except AttributeError:
+            pass
+        if weight is None: pass
+        elif isinstance(weight, str) and weight == "norm":
+            if is_callable(module, "weight"):
+                torch.nn.utils.weight_norm(module, "weight")
+            if is_callable(module, "bias"):
+                torch.nn.utils.weight_norm(module, "bias")
+        else:
+            try:
+                module.weight.data.fill_(weight)
+            except AttributeError:
+                pass
+            try:
+                module.bias.data.fill_(weight)
+            except AttributeError:
+                pass
+
+
     def reset_parameters(self, weight: float=None):
         """
         Params::
             weight: float or str. string で "random" の場合は reset_parameters() を呼び出す
+                norm: weght normalization という手法. 
         """
-        # 重みの初期化
-        for name, _ in self.named_modules():
+        for name, module in self.named_modules():
             if name != "":
-                if weight is None:
-                    try:
-                        self.__getattr__(name).reset_parameters()
-                    except AttributeError:
-                        pass
-                else:
-                    try:
-                        self.__getattr__(name).weight.data.fill_(weight)
-                    except AttributeError:
-                        pass
-                    try:
-                        self.__getattr__(name).bias.data.fill_(weight)
-                    except AttributeError:
-                        pass
+                if isinstance(module, TorchNN): continue
+                logger.info(f"reset params: {name}")
+                self._reset_parameters(module, weight=weight)
 
 
 class ResBlock(TorchNN):
@@ -195,9 +208,10 @@ class BaseNN:
         # network
         mynn: nn.Module, mtype: str,
         # loss functions
-        loss_funcs: List[object],
+        loss_funcs: List[List[object]]=None, loss_funcs_valid: List[List[object]]=None,
         # optimizer
         optimizer: Optimizer=torch.optim.SGD, optim_dict: dict={"lr":0.001, "weight_decay":0},
+        scheduler: _LRScheduler=None ,scheduler_dict: dict=None,
         # train dataloader
         dataloader_train: torch.utils.data.DataLoader=None,
         # validation dataset
@@ -211,7 +225,8 @@ class BaseNN:
         Params::
             mynn: PyTorch形式でのNN
             mtype: "cls" or "reg"
-            loss_funcs: list形式での callable な loss function
+            loss_funcs: List[List[Lossfunc]]形式での callable な loss function
+            loss_funcs_valid: list形式での callable な loss function. gradientは計算されない. Noneの場合はloss_funcsと同じ
             optimizer: Optimizer を継承した class を set. init で
             dataloader_train: DataLoader形式. 画像系の場合は DataLoader使う
             dataloader_valids: DataLoader形式のList
@@ -220,11 +235,17 @@ class BaseNN:
         self.mynn  = mynn
         self.mtype = mtype
         # Loss
-        self.loss_funcs = loss_funcs
+        if loss_funcs is not None: check_list_depth(loss_funcs, 2)
+        if loss_funcs_valid is not None: check_list_depth(loss_funcs_valid, 2)
+        self.loss_funcs       = loss_funcs if loss_funcs is not None else [[]]
+        self.loss_funcs_valid = loss_funcs_valid if loss_funcs_valid is not None else loss_funcs
         # Optimizer
         self.optimizer = optimizer(self.mynn.parameters(), **optim_dict)
+        self.scheduler = scheduler(self.optimizer , **scheduler_dict) if scheduler is not None else None
         self.optimizer_class = optimizer
         self.optimizer_dict  = optim_dict
+        self.scheduler_class = scheduler
+        self.scheduler_dict  = scheduler_dict
         # DataLoader
         self.dataloader_train  = dataloader_train
         self.dataloader_valids = dataloader_valids
@@ -255,31 +276,34 @@ class BaseNN:
 
     def __str__(self):
         string = f"""model type     : {self.mtype}
-loss functions : {self.loss_funcs}
-optimizer      : {self.optimizer}
-batch size     : {self.batch_size}
-epoch          : {self.epoch}
-network        : {self.mynn}"""
+loss functions       : {self.loss_funcs}
+loss functions valid : {self.loss_funcs_valid}
+optimizer            : {self.optimizer}
+batch size           : {self.batch_size}
+epoch                : {self.epoch}
+network              : {self.mynn}"""
         return string
     
     def check_init(self):
         if self.mtype not in ["cls", "reg"]:
             logger.raise_error(f'"mtype" is "cls" or "reg": {self.mtype}')
 
-    def initialize(self):
+    def initialize(self, weight: float=None):
         self.iter      = 0
         self.iter_best = self.epoch
         self.classes_: np.ndarray = None
         self.min_loss  = float("inf")
         self.early_stopping_iter = 0
         self.best_params = {}
-        self.mynn.reset_parameters()
+        self.mynn.reset_parameters(weight=weight)
         self.optimizer = self.optimizer_class(self.mynn.parameters(), **self.optimizer_dict)
+        self.scheduler = self.scheduler_class(self.optimizer , **self.scheduler_dict) if self.scheduler_class is not None else None
 
     def to_cuda(self):
         """ GPUの使用をONにする """
         self.mynn.to(torch.device("cuda:0")) # moduleがcudaにのっているかどうかは、next(model.parameters()).is_cuda で確認できる
-        self.loss_funcs = [x.to(torch.device("cuda:0")) for x in self.loss_funcs]
+        self.loss_funcs       = [[x.to(torch.device("cuda:0")) for x in listwk] for listwk in self.loss_funcs]
+        self.loss_funcs_valid = [[x.to(torch.device("cuda:0")) for x in listwk] for listwk in self.loss_funcs_valid]
         self.is_cuda = True
 
     def val_to(self, x):
@@ -349,14 +373,16 @@ network        : {self.mynn}"""
         output, label = self.processes(_input, label=label, is_valid=False)
         # loss calculation
         loss, losses = 0, []
-        for i, loss_func in enumerate(self.loss_funcs):
-            losses.append(loss_func(output[i], label[i]))
-            loss += losses[-1]
+        for i, _loss_funcs in enumerate(self.loss_funcs):
+            for loss_func in _loss_funcs:
+                losses.append(loss_func(output[i], label[i]))
+                loss += losses[-1]
         loss.backward()
         self.optimizer.step()
+        if self.scheduler is not None: self.scheduler.step()
         loss   = float(loss.to("cpu").detach().item())
         losses = [float(_x.to("cpu").detach().item()) for _x in losses]
-        logger.info(f'iter: {self.iter}, train: {loss}, loss: {losses}')
+        logger.info(f'iter: {self.iter}, train: {loss}, loss: {losses}, lr: {"No schedule." if self.scheduler is None else self.scheduler.get_last_lr()[0]}')
         # tensor board
         self.writer.add_scalar("train/total_loss", loss, self.iter)
         for i_loss, _loss in enumerate(losses): self.writer.add_scalar(f"train/loss_{i_loss}", _loss, self.iter)
@@ -370,9 +396,10 @@ network        : {self.mynn}"""
             output, label = self.processes(_input, label=label, is_valid=True)
             # loss calculation
             loss_valid, losses_valid = 0, []
-            for i, loss_func in enumerate(self.loss_funcs):
-                losses_valid.append(loss_func(output[i], label[i]))
-                loss_valid += losses_valid[-1]
+            for i, _loss_funcs in enumerate(self.loss_funcs_valid):
+                for loss_func in _loss_funcs:
+                    losses_valid.append(loss_func(output[i], label[i]))
+                    loss_valid += losses_valid[-1]
             loss_valid   = float(loss_valid.to("cpu").detach().item())
             losses_valid = [float(_x.to("cpu").detach().item()) for _x in losses_valid]
             logger.info(f'iter: {self.iter}, valid: {loss_valid}, loss: {losses_valid}')
@@ -396,7 +423,6 @@ network        : {self.mynn}"""
         """
         numpy ndarray ベースの train
         """
-        self.initialize()
         if self.mtype in ["cls"]:
             self.classes_: np.ndarray = np.sort(np.unique(y_train)).astype(int)
         indexes = np.arange(x_train.shape[0])
@@ -428,7 +454,6 @@ network        : {self.mynn}"""
         """
         dataloader を使う場合はこっち
         """
-        self.initialize()
         try:
             for _ in range(self.epoch):
                 for _input, label in self.dataloader_train:

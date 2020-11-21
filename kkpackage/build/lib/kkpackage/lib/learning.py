@@ -37,7 +37,7 @@ class ProcRegistry(object):
         self.processing["default_row"]["cols"] = None
         self.processing["default_row"]["proc"] = []
         logger.info("END")
-
+    
 
     def __call__(self, df: pd.DataFrame, autofix: bool=False, x_proc: bool=True, y_proc: bool=True, row_proc: bool=True):
         logger.info("START")
@@ -326,6 +326,33 @@ class MyOneHotInverse:
         bool_col[self.target_indexes] = True
         if (ndf[:, bool_col].sum(axis=1) == 1).sum() != ndf.shape[0]:
             logger.raise_error(f'input values is not OneHot type: \n{ndf}')
+
+class MyOneHotInverseUnique:
+    def __init__(self, target_indexes: List[int]=None):
+        check_type(target_indexes, [list, tuple, type(None)])
+        self.target_indexes = target_indexes
+        self.dict_conv = {}
+    def __str__(self): return f'{self.__class__.__name__}(target_indexes: {self.target_indexes})'
+    def __call__(self, ndf: np.ndarray):
+        if self.target_indexes is None:
+            se = pd.DataFrame(ndf).apply(lambda x: str(x.tolist()),axis=1).astype(str)
+            ndf = se.map(self.dict_conv).values
+        else:
+            bool_col = np.zeros(ndf.shape[1]).astype(bool)
+            bool_col[self.target_indexes] = True
+            ndfwk = ndf[self.target_indexes]
+            ndf   = ndf[:, ~bool_col].copy()
+            se = pd.DataFrame(ndfwk).apply(lambda x: str(x.tolist()),axis=1).astype(str)
+            ndfwk = se.map(self.dict_conv).values
+            ndf = np.concatenate([ndf, ndfwk.reshape(-1, 1)], axis=1)
+        return ndf
+    def fit(self, ndf: np.ndarray):
+        ndfwk = None
+        if self.target_indexes is None:
+            ndfwk = np.unique(ndf, axis=0)
+        else:
+            ndfwk = np.unique(ndf[self.target_indexes], axis=0)
+        self.dict_conv = {str(x.tolist()):i for i, x in enumerate(ndfwk)}
 
 class MyOneHotAuto:
     def __init__(self, n_size_first: int=-1, n_unique_first: int=5, n_unique_second: int=5, min_unique: int=2):
