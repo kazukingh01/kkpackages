@@ -182,7 +182,7 @@ def check_dataframe_diff(df1: pd.DataFrame, df2: pd.DataFrame, logger: logging.L
     if logger is None:
         from kkpackage.util.logger import set_logger # 常に使いたくないのでここで呼ぶ
         logger = set_logger(__name__)
-    df1, df2 = df1.copy().fillna(0), df2.copy().fillna(0) # Series内の nan == nan は False になるので fill しておく
+    df1, df2 = df1.copy().fillna(-999), df2.copy().fillna(-999) # Series内の nan == nan は False になるので fill しておく
 
     logger.info("check dataframe shape.", color=["BOLD", "GREEN"])
     logger.info(f"df1 shape: {df1.shape}")
@@ -220,7 +220,7 @@ def check_dataframe_diff(df1: pd.DataFrame, df2: pd.DataFrame, logger: logging.L
     for x in same_columns:
         sebool = (df1[x] == df2[x])
         if (~sebool).sum() > 0:
-            logger.warning(f'"{x}" is different. different values: {[(_x, _y, ) for _x, _y in zip(df1.loc[~sebool, x].iloc[:max_count].values, df2.loc[~sebool, x].iloc[:max_count].values)]}')
+            logger.warning(f'"{x}" is different. different count: {(~sebool).sum()}. different index: {df1.index[~sebool]}. {(~sebool).sum()}. different values: {[(_x, _y, ) for _x, _y in zip(df1.loc[~sebool, x].iloc[:max_count].values, df2.loc[~sebool, x].iloc[:max_count].values)]}')
         else:
             if ignore_same == False:
                 logger.info(f'"{x}" is same.', color=["BOLD", "BLUE"])

@@ -217,7 +217,8 @@ class BaseNN:
         # validation dataset
         dataloader_valids: List[torch.utils.data.DataLoader]=[],
         # train parameter
-        epoch: int=100, batch_size: int=-1, valid_step: int=-1, early_stopping_rounds: int=-1, batch_size_valid: int=-1,
+        epoch: int=100, batch_size: int=-1, valid_step: int=-1, batch_size_valid: int=-1,
+        early_stopping_rounds: int=-1, early_stopping_loss_diff: float=None, 
         # output
         outdir: str="./output_"+datetime.datetime.now().strftime("%Y%m%d%H%M%S"), save_step: int=None
     ):
@@ -253,7 +254,8 @@ class BaseNN:
         self.batch_size = batch_size
         # validation
         self.valid_step = valid_step
-        self.early_stopping_rounds = early_stopping_rounds
+        self.early_stopping_rounds    = early_stopping_rounds
+        self.early_stopping_loss_diff = early_stopping_loss_diff
         self.batch_size_valid = batch_size_valid
         # Config
         self.is_cuda   = False
@@ -263,7 +265,8 @@ class BaseNN:
         # Other
         self.iter      = 0
         self.iter_best = self.epoch
-        self.min_loss  = float("inf")
+        self.min_loss_train = float("inf")
+        self.min_loss_valid = float("inf")
         self.early_stopping_iter = 0
         self.best_params = {}
         self.outdir = correct_dirpath(outdir)
@@ -292,7 +295,7 @@ network              : {self.mynn}"""
         self.iter      = 0
         self.iter_best = self.epoch
         self.classes_: np.ndarray = None
-        self.min_loss  = float("inf")
+        self.min_loss_valid  = float("inf")
         self.early_stopping_iter = 0
         self.best_params = {}
         self.mynn.reset_parameters(weight=weight)
@@ -381,6 +384,7 @@ network              : {self.mynn}"""
         self.optimizer.step()
         if self.scheduler is not None: self.scheduler.step()
         loss   = float(loss.to("cpu").detach().item())
+        self.min_loss_train = loss
         losses = [float(_x.to("cpu").detach().item()) for _x in losses]
         logger.info(f'iter: {self.iter}, train: {loss}, loss: {losses}, lr: {"No schedule." if self.scheduler is None else self.scheduler.get_last_lr()[0]}')
         # tensor board
@@ -407,8 +411,14 @@ network              : {self.mynn}"""
             self.writer.add_scalar(f"validation{i_valid}/total_loss", loss_valid, self.iter)
             for i_loss, _loss in enumerate(losses_valid): self.writer.add_scalar(f"validation{i_valid}/loss_{i_loss}", _loss, self.iter)
             self.early_stopping_iter += 1
-            if i_valid == 0 and self.min_loss > loss_valid:
-                self.min_loss = loss_valid
+            # early stopping conditions
+            bool_store_early_stopping = False
+            if   i_valid == 0 and self.early_stopping_loss_diff is None and self.min_loss_valid > loss_valid:
+                bool_store_early_stopping = True
+            elif i_valid == 0 and isinstance(self.early_stopping_loss_diff, float) and (loss_valid - self.min_loss_train < self.early_stopping_loss_diff):
+                bool_store_early_stopping = True
+            if bool_store_early_stopping:
+                self.min_loss_valid = loss_valid
                 self.early_stopping_iter = 0 # iteration を reset
                 self.best_params = {
                     "iter": self.iter,
