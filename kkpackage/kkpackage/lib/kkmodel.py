@@ -175,6 +175,7 @@ class MyModel:
             self.logger.raise_error("model is not set !!")
         if calc_randomtrees:
             if df is None: self.logger.raise_error("dataframe is None !!")
+            if self.colname_answer.shape[0] > 1: self.logger.raise_error(f"answer has over 1 columns. {self.colname_answer}")
             df   = self.preproc(df, x_proc=False, y_proc=False, row_proc=True)
             proc = ProcRegistry(self.colname_explain, self.colname_answer)
             proc.register(
