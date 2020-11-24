@@ -11,7 +11,6 @@ from joblib import Parallel, delayed
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score, r2_score, mean_squared_error, mean_absolute_error, f1_score
 from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
-from fast_histogram import histogram1d, histogram2d
 
 #  local package
 from kkpackage.util.dataframe import divide_index
@@ -1396,6 +1395,7 @@ def calc_mutual_information(ndfx: np.ndarray, ndfy: np.ndarray, *args, bins: int
     y = np.random.rand(1000, 10)
     ndfx, ndfy, bins, base_max = x, y, 100, 1
     """
+    from fast_histogram import histogram1d, histogram2d
     logger.info("START")
     list_ndf = []
     for x in ndfx.T:
