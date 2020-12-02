@@ -139,3 +139,6 @@ def check_list_depth(target: object, depth: int, check_type: type=list):
                 raise Exception(f'target: {target} is not depth: {depth}')
     else:
         raise Exception(f'target: {target} is not type: {check_type}')
+
+def get_filename(path: str):
+    return ".".join(path.split(".")[:-1])
