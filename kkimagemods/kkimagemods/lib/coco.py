@@ -13,8 +13,8 @@ from typing import List
 
 # my package
 from kkimagemods.util.images import drow_bboxes
-from kkimagemods.util.common import correct_dirpath, check_type, makedirs, get_file_list, get_filename
-from kkimagemods.util.logger import set_logger
+from kkpackage.util.common import correct_dirpath, check_type, makedirs, get_file_list, get_filename
+from kkpackage.util.logger import set_logger
 logger = set_logger(__name__)
 
 def coco_info(
@@ -25,7 +25,6 @@ def coco_info(
         contributor: str = "Test",
         date_created: str = datetime.datetime.now().strftime("%Y/%m/%d")
         ):
-
     _dict = {}
     _dict["description"] = description
     _dict["url"] = url
@@ -33,7 +32,6 @@ def coco_info(
     _dict["year"] = year
     _dict["contributor"] = contributor
     _dict["date_created"] = date_created
-
     return _dict
 
 
@@ -679,6 +677,50 @@ class CocoManager:
         self.coco_info = {}
 
 
+    def initialize(self):
+        """
+        images_id                                                                    0
+        images_coco_url                                       ./traindata/000000.0.png
+        images_date_captured                                       2020-07-30 16:07:12
+        images_file_name                                                  000000.0.png
+        images_flickr_url                                                  http://test
+        images_height                                                             1400
+        images_license                                                               0
+        images_width                                                              1400
+        annotations_id                                                               0
+        annotations_area                                                         11771
+        annotations_bbox             [727.0316772460938, 596.92626953125, 124.13433...
+        annotations_category_id                                                      0
+        annotations_image_id                                                         0
+        annotations_iscrowd                                                          0
+        annotations_keypoints        [834, 855, 2, 821, 649, 2, 780, 615, 2, 750, 6...
+        annotations_num_keypoints                                                    5
+        annotations_segmentation     [[773, 602, 772, 603, 771, 603, 770, 603, 769,...
+        licenses_id                                                                  0
+        licenses_name                                                     test license
+        licenses_url                                                       http://test
+        categories_id                                                                0
+        categories_keypoints         [kpt_a, kpt_cb, kpt_c, kpt_cd, kpt_e, kpt_b, k...
+        categories_name                                                           hook
+        categories_skeleton                   [[0, 1], [1, 2], [2, 3], [3, 4], [5, 6]]
+        categories_supercategory                                                  hook
+        """
+        self.df_json = pd.DataFrame(
+            columns=[
+                'images_id', 'images_coco_url', 'images_date_captured',
+                'images_file_name', 'images_flickr_url', 'images_height',
+                'images_license', 'images_width', 'annotations_id', 'annotations_area',
+                'annotations_bbox', 'annotations_category_id', 'annotations_image_id',
+                'annotations_iscrowd', 'annotations_keypoints',
+                'annotations_num_keypoints', 'annotations_segmentation', 'licenses_id',
+                'licenses_name', 'licenses_url', 'categories_id',
+                'categories_keypoints', 'categories_name', 'categories_skeleton',
+                'categories_supercategory'
+            ]
+        )
+        self.coco_info = coco_info()
+
+
     @classmethod
     def json_to_df(cls, src):
         check_type(src, [str, dict])
@@ -719,8 +761,8 @@ class CocoManager:
 
         # coco format に足りないカラムがあれば追加する
         for name, default_value in zip(
-            ["categories_keypoints", "categories_skeleton", "licenses_name", "licenses_url"], 
-            [[], [], np.nan, np.nan]
+            ["categories_keypoints", "categories_skeleton", "licenses_name", "licenses_url", "annotations_segmentation", "annotations_keypoints"], 
+            [[], [], np.nan, np.nan, [], []]
         ):
             if (self.df_json.columns == name).sum() == 0:
                 self.df_json[name] = [default_value for _ in np.arange(self.df_json.shape[0])]
@@ -794,8 +836,8 @@ class CocoManager:
         try:
             self.coco_info = json_coco["info"]
         except KeyError:
-            print("'src' file or dictionary is not found 'info' key. so, skip this src.")
-            return None
+            logger.warning("'src' file or dictionary is not found 'info' key. so, skip this src.")
+            self.coco_info = coco_info()
         df = self.json_to_df(json_coco)
         if root_image is not None: df["images_coco_url"] = correct_dirpath(root_image) + df["images_file_name"]
         self.df_json = pd.concat([self.df_json, df], axis=0, ignore_index=True, sort=False)

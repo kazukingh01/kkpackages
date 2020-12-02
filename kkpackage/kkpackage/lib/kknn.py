@@ -1,4 +1,4 @@
-import datetime
+import os, random, datetime
 from typing import List, Tuple
 from collections import namedtuple
 from functools import partial
@@ -10,6 +10,7 @@ from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.tensorboard import SummaryWriter
 # local package
 from kkpackage.util.dataframe import divide_index
+from kkpackage.util.learning import softmax
 from kkpackage.util.common import is_callable, correct_dirpath, makedirs, check_type, check_list_depth
 from kkpackage.util.logger import set_loglevel, set_logger
 logger = set_logger(__name__)
@@ -206,12 +207,12 @@ class BaseNN:
     def __init__(
         self,
         # network
-        mynn: nn.Module, mtype: str,
+        mynn: nn.Module, mtype: str="cls",
         # loss functions
-        loss_funcs: List[List[object]]=None, loss_funcs_valid: List[List[object]]=None,
+        loss_funcs: List[object]=None, loss_funcs_valid: List[object]=None,
         # optimizer
-        optimizer: Optimizer=torch.optim.SGD, optim_dict: dict={"lr":0.001, "weight_decay":0},
-        scheduler: _LRScheduler=None ,scheduler_dict: dict=None,
+        optimizer: Optimizer=torch.optim.SGD, optim_params: dict={"lr":0.001, "weight_decay":0},
+        scheduler: _LRScheduler=None ,scheduler_params: dict=None,
         # train dataloader
         dataloader_train: torch.utils.data.DataLoader=None,
         # validation dataset
@@ -220,33 +221,36 @@ class BaseNN:
         epoch: int=100, batch_size: int=-1, valid_step: int=-1, batch_size_valid: int=-1,
         early_stopping_rounds: int=-1, early_stopping_loss_diff: float=None, 
         # output
-        outdir: str="./output_"+datetime.datetime.now().strftime("%Y%m%d%H%M%S"), save_step: int=None
+        outdir: str="./output_"+datetime.datetime.now().strftime("%Y%m%d%H%M%S"), save_step: int=None,
+        # others
+        random_seed: int=0, num_workers: int=1
     ):
         """
         Params::
             mynn: PyTorch形式でのNN
             mtype: "cls" or "reg"
             loss_funcs: List[List[Lossfunc]]形式での callable な loss function
+                ListのList[Lossfunc]になっている。2階層目は、outputが複数に分岐して別々にlossを計算する場合. 1階層目は別々のlossを計算する場合
             loss_funcs_valid: list形式での callable な loss function. gradientは計算されない. Noneの場合はloss_funcsと同じ
             optimizer: Optimizer を継承した class を set. init で
-            dataloader_train: DataLoader形式. 画像系の場合は DataLoader使う
+            dataloader_train: DataLoader形式. 画像や言語系の場合は DataLoader使う
             dataloader_valids: DataLoader形式のList
         """
         # NN
         self.mynn  = mynn
         self.mtype = mtype
         # Loss
-        if loss_funcs is not None: check_list_depth(loss_funcs, 2)
-        if loss_funcs_valid is not None: check_list_depth(loss_funcs_valid, 2)
-        self.loss_funcs       = loss_funcs if loss_funcs is not None else [[]]
-        self.loss_funcs_valid = loss_funcs_valid if loss_funcs_valid is not None else loss_funcs
+        if loss_funcs is not None: check_list_depth(loss_funcs, 1)
+        if loss_funcs_valid is not None: check_list_depth(loss_funcs_valid, 1)
+        self.loss_funcs       = loss_funcs if loss_funcs is not None else []
+        self.loss_funcs_valid = loss_funcs_valid if loss_funcs_valid is not None else self.loss_funcs
         # Optimizer
-        self.optimizer = optimizer(self.mynn.parameters(), **optim_dict)
-        self.scheduler = scheduler(self.optimizer , **scheduler_dict) if scheduler is not None else None
-        self.optimizer_class = optimizer
-        self.optimizer_dict  = optim_dict
-        self.scheduler_class = scheduler
-        self.scheduler_dict  = scheduler_dict
+        self.optimizer = optimizer(self.mynn.parameters(), **optim_params)
+        self.scheduler = scheduler(self.optimizer , **scheduler_params) if scheduler is not None else None
+        self.optimizer_class  = optimizer
+        self.optimizer_params = optim_params
+        self.scheduler_class  = scheduler
+        self.scheduler_params = scheduler_params
         # DataLoader
         self.dataloader_train  = dataloader_train
         self.dataloader_valids = dataloader_valids
@@ -272,6 +276,8 @@ class BaseNN:
         self.outdir = correct_dirpath(outdir)
         makedirs(self.outdir, exist_ok=True, remake=True)
         self.save_step = save_step
+        self.set_seed_all(random_seed)
+        self.num_workers = num_workers
         # TensorBoard
         self.writer = SummaryWriter(log_dir=self.outdir + "logs")
         # Check
@@ -287,6 +293,16 @@ epoch                : {self.epoch}
 network              : {self.mynn}"""
         return string
     
+    def set_seed_all(self, seed: int):
+        random.seed(seed)
+        os.environ['PYTHONHASHSEED'] = str(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        logger.info('Set random seeds')
+
     def check_init(self):
         if self.mtype not in ["cls", "reg"]:
             logger.raise_error(f'"mtype" is "cls" or "reg": {self.mtype}')
@@ -299,14 +315,14 @@ network              : {self.mynn}"""
         self.early_stopping_iter = 0
         self.best_params = {}
         self.mynn.reset_parameters(weight=weight)
-        self.optimizer = self.optimizer_class(self.mynn.parameters(), **self.optimizer_dict)
-        self.scheduler = self.scheduler_class(self.optimizer , **self.scheduler_dict) if self.scheduler_class is not None else None
+        self.optimizer = self.optimizer_class(self.mynn.parameters(), **self.optimizer_params)
+        self.scheduler = self.scheduler_class(self.optimizer , **self.scheduler_params) if self.scheduler_class is not None else None
 
     def to_cuda(self):
         """ GPUの使用をONにする """
         self.mynn.to(torch.device("cuda:0")) # moduleがcudaにのっているかどうかは、next(model.parameters()).is_cuda で確認できる
-        self.loss_funcs       = [[x.to(torch.device("cuda:0")) for x in listwk] for listwk in self.loss_funcs]
-        self.loss_funcs_valid = [[x.to(torch.device("cuda:0")) for x in listwk] for listwk in self.loss_funcs_valid]
+        self.loss_funcs       = [x.to(torch.device("cuda:0")) for x in self.loss_funcs]
+        self.loss_funcs_valid = [x.to(torch.device("cuda:0")) for x in self.loss_funcs_valid]
         self.is_cuda = True
 
     def val_to(self, x):
@@ -376,10 +392,9 @@ network              : {self.mynn}"""
         output, label = self.processes(_input, label=label, is_valid=False)
         # loss calculation
         loss, losses = 0, []
-        for i, _loss_funcs in enumerate(self.loss_funcs):
-            for loss_func in _loss_funcs:
-                losses.append(loss_func(output[i], label[i]))
-                loss += losses[-1]
+        for i, loss_func in enumerate(self.loss_funcs):
+            losses.append(loss_func(output[i], label[i]))
+            loss += losses[-1]
         loss.backward()
         self.optimizer.step()
         if self.scheduler is not None: self.scheduler.step()
@@ -400,10 +415,9 @@ network              : {self.mynn}"""
             output, label = self.processes(_input, label=label, is_valid=True)
             # loss calculation
             loss_valid, losses_valid = 0, []
-            for i, _loss_funcs in enumerate(self.loss_funcs_valid):
-                for loss_func in _loss_funcs:
-                    losses_valid.append(loss_func(output[i], label[i]))
-                    loss_valid += losses_valid[-1]
+            for i, loss_func in enumerate(self.loss_funcs_valid):
+                losses_valid.append(loss_func(output[i], label[i]))
+                loss_valid += losses_valid[-1]
             loss_valid   = float(loss_valid.to("cpu").detach().item())
             losses_valid = [float(_x.to("cpu").detach().item()) for _x in losses_valid]
             logger.info(f'iter: {self.iter}, valid: {loss_valid}, loss: {losses_valid}')
@@ -480,57 +494,59 @@ network              : {self.mynn}"""
         self.writer.close()
         self.save(is_best=True)
 
-    def predict(self, _x: np.ndarray, _y: np.ndarray=None, batch_size: int=-1, out_index: int=0):
+    def predict(
+        self, _x: np.ndarray=None, _y: np.ndarray=None, 
+        dataloader: torch.utils.data.DataLoader=None, is_label: bool=False, 
+        batch_size: int=-1, out_index: int=0
+    ):
         """
-        numpy ndarray ベースの predict
-        Params::
-            batch_size: GPUで計算できないサイズが考えられるので分割できるようにしておく
+        predict処理.
+        詳細は predict_proba を参照
         """
-        if not _y:
-            output = self.predict_proba(_x, _y=_y, batch_size=batch_size, out_index=out_index)
+        if (_x is not None and _y is None) or (dataloader is not None and is_label == False):
+            output        = self.predict_proba(_x=_x, _y=_y, dataloader=dataloader, is_label=is_label, batch_size=batch_size, out_index=out_index)
         else:
-            output, label = self.predict_proba(_x, _y=_y, batch_size=batch_size, out_index=out_index)
+            output, label = self.predict_proba(_x=_x, _y=_y, dataloader=dataloader, is_label=is_label, batch_size=batch_size, out_index=out_index)
         if self.mtype in ["cls"]:
             output = np.argmax(output, axis=1)
-        if _y is None:
+        if (_x is not None and _y is None) or (dataloader is not None and is_label == False):
             return output
         else:
             return output, label
     
-    def predict_proba(self, _x: np.ndarray, _y: np.ndarray=None, batch_size: int=-1, out_index: int=0):
+    def predict_proba(
+        self, _x: np.ndarray=None, _y: np.ndarray=None, batch_size: int=-1, 
+        dataloader: torch.utils.data.DataLoader=None, is_label: bool=False, 
+        out_index: int=0, is_softmax: bool=False
+    ):
         """
-        numpy ndarray ベースの predict
+        cls と reg のときの predict処理共通実装. cls の場合のラベル推定はpredict で処理する.
+        Params::
+            _x: input. numpy 形式
+            _y: label. あれば入力
+            batch_size: numpy 形式の場合のbatch size
+            dataloader: 画像や言語など、dataloader形式の方が楽な場合はこっちに入力する
+            is_label: dataloader形式の場合の正解ラベルがあるかどうか. ※ただし、for _input, label in dataloader のように出力は２つ用意する
+            out_index: loss を複数計算している場合など、outputが複数の場合に、どの要素番号を採用するか
+        Output::
+            label があるかどうかで、出力の数が変わる
+            np.ndarray or (np.ndarray, np.ndarray, )
         """
-        if self.mtype not in ["cls"]: logger.raise_error(f'model type is not cls. {self.mtype}')
-        _x = torch.from_numpy(_x)
-        if _y is not None: _y = torch.from_numpy(_y)
         self.mynn.eval()
-        output, label = None, None
         with torch.no_grad():
-            if batch_size > 1:
-                listwk = divide_index(np.arange(_x.shape[0]), n_div=batch_size)
-                output, label = [], []
-                for _index in listwk:
-                    _output, _label = self.processes(_x[_index], label=(None if _y is None else _y[_index]), is_valid=True)
-                    _output = _output[out_index].to("cpu").detach().numpy()
-                    output.append(_output)
-                    if _y is not None:
-                        _label = _label[out_index].to("cpu").detach().numpy()
-                        label.append(_label)
-                output = np.concatenate(output, axis=0)
-                if _y is not None: label = np.concatenate(label, axis=0)
-                else: label = None
+            if dataloader is not None:
+                output, label = self.predict_proba_dataloader(dataloader=dataloader, is_label=is_label, out_index=out_index)
             else:
-                output, label = self.processes(_x, label=_y, is_valid=True)
-                output = output[out_index].to("cpu").detach().numpy()
-                if _y is not None: label = label.to("cpu").detach().numpy()
-        if self.mtype not in ["reg"]:
+                output, label = self.predict_proba_numpy(_x=_x, _y=_y, batch_size=batch_size, out_index=out_index)
+        if self.mtype in ["reg"]:
             if len(output.shape) == 2 and output.shape[1] == 1:
                 # regression で 1次元の場合はreshapeする
                 output = output.reshape(-1)
             else:
                 pass
         elif self.mtype in ["cls"]:
+            if is_softmax:
+                output = softmax(output)
             if   len(output.shape) == 2 and output.shape[1] == 1:
                 # binary class
                 output = np.concatenate([1 - output, output], axis=1)
@@ -539,7 +555,50 @@ network              : {self.mynn}"""
                 pass
             else:
                 logger.raise_error(f"output: {output.shape} is not expected.")
-        if _y is None:
+        if (_x is not None and _y is None) or (dataloader is not None and is_label == False):
             return output
         else:
             return output, label
+
+    def predict_proba_numpy(self, _x: np.ndarray, _y: np.ndarray=None, batch_size: int=-1, out_index: int=0):
+        """
+        numpy ndarray ベースの predict
+        """
+        _x = torch.from_numpy(_x)
+        if _y is not None: _y = torch.from_numpy(_y)
+        output, label = None, None
+        if batch_size > 1:
+            listwk = divide_index(np.arange(_x.shape[0]), n_div=batch_size)
+            output, label = [], []
+            for _index in listwk:
+                _output, _label = self.processes(_x[_index], label=(None if _y is None else _y[_index]), is_valid=True)
+                _output = _output[out_index].to("cpu").detach().numpy()
+                output.append(_output)
+                if _y is not None:
+                    _label = _label[out_index].to("cpu").detach().numpy()
+                    label.append(_label)
+            output = np.concatenate(output, axis=0)
+            if _y is not None: label = np.concatenate(label, axis=0)
+            else: label = None
+        else:
+            output, label = self.processes(_x, label=_y, is_valid=True)
+            output = output[out_index].to("cpu").detach().numpy()
+            if _y is not None: label = label.to("cpu").detach().numpy()
+        return output, label
+
+    def predict_proba_dataloader(self, dataloader: torch.utils.data.DataLoader, is_label: bool=False, out_index: int=0):
+        """
+        dataloader ベースの predict
+        """
+        output, label = [], []
+        for _input, _label in dataloader:
+            _output, _label = self.processes(_input, label=_label if is_label else None, is_valid=True)
+            _output = _output[out_index].to("cpu").detach().numpy()
+            output.append(_output)
+            if is_label:
+                _label = _label[out_index].to("cpu").detach().numpy()
+                label.append(_label)
+        output = np.concatenate(output, axis=0)
+        if is_label: label = np.concatenate(label, axis=0)
+        return output, label
+
