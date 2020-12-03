@@ -62,7 +62,9 @@ class SeriesExample(torchtext.data.Example):
 
 class NLPNN(BaseNN):
     def __init__(
-        self, num_labels: int, nn_add: torch.nn.Module=None, mtype: str="cls", fine_tuning_type: str="full",
+        self, num_labels: int, mtype: str="cls", 
+        # Nlp
+        nn_add: torch.nn.Module=None, fine_tuning_type: str="full", add_tokens: List[str] = None,
         # loss functions
         loss_funcs: List[object]=None, loss_funcs_valid: List[object]=None,
         # optimizer
@@ -79,6 +81,10 @@ class NLPNN(BaseNN):
         # BERT + Torknizer 定義
         model          = trf.BertForSequenceClassification.from_pretrained('cl-tohoku/bert-base-japanese-whole-word-masking', num_labels=num_labels)
         self.tokenizer = trf.BertJapaneseTokenizer.from_pretrained('cl-tohoku/bert-base-japanese-whole-word-masking')
+        # add tokens
+        if (not add_tokens) == False:
+            self.tokenizer.add_tokens(add_tokens)
+            model.resize_token_embeddings(len(self.tokenizer)) 
         # Tuning type
         if fine_tuning_type == 'fast':
             # 1. まず全部を、勾配計算Falseにしてしまう
@@ -104,7 +110,7 @@ class NLPNN(BaseNN):
         self.TEXT = torchtext.data.Field(
             tokenize=self.nlp_preprocessing,
             sequential=True, use_vocab=True, lower=False,
-            include_lengths=True, batch_first=True, fix_length=512,
+            include_lengths=True, batch_first=True, fix_length=self.tokenizer.model_max_length,
             init_token='[CLS]', eos_token='[SEP]', pad_token='[PAD]', unk_token='[UNK]'
         )
         self.LABEL = torchtext.data.Field(sequential=False, use_vocab=False)
@@ -125,9 +131,11 @@ class NLPNN(BaseNN):
             outdir=outdir, save_step=save_step, random_seed=random_seed, num_workers=num_workers
         )
 
-    def _build_vocab(self, dataset: torchtext.data.Dataset, min_freq: int=1):
-        self.TEXT.build_vocab(dataset, min_freq=min_freq) # vocab を作成(初期化)する
-        self.TEXT.vocab.stoi = self.tokenizer.vocab # string to index の変換辞書, tokenizerで置き換え
+    def _build_vocab(self, dataset: torchtext.data.Dataset=None, min_freq: int=1):
+        self.TEXT.build_vocab(dataset if dataset is not None else [], min_freq=min_freq) # vocab を作成(初期化)する
+        self.TEXT.vocab.stoi = self.tokenizer.vocab.copy() # string to index の変換辞書, tokenizerで置き換え
+        for x, y in self.tokenizer.added_tokens_encoder.items(): self.TEXT.vocab.stoi[x] = y
+        self.TEXT.vocab.itos = [x for x in self.TEXT.vocab.stoi.keys()]
 
     def nlp_preprocessing(self, text: str):
         # 半角、全角の変換
