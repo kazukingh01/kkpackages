@@ -690,8 +690,9 @@ class MyModel:
             
         # 前処理の結果を反映する
         X = None
+        if df is not None and row_proc: df = self.preproc(df, x_proc=False, y_proc=False, row_proc=True) # ここで変換しないとdf_scoreとのindexが合わない
         if _X is None:
-            X, _ = self.preproc(df, x_proc=True, y_proc=False, row_proc=row_proc)
+            X, _ = self.preproc(df, x_proc=True, y_proc=False, row_proc=False)
             if len(X) == 1: X = X[0] #_addがなければ元に戻す
         else:
             # numpy変換処理での遅延を避けるため、引数でも指定できるようにする
@@ -710,7 +711,7 @@ class MyModel:
         try:
             Y = None
             if _Y is None and df is not None:
-                _, Y = self.preproc(df, x_proc=False, y_proc=True, row_proc=row_proc)
+                _, Y = self.preproc(df, x_proc=False, y_proc=True, row_proc=False)
                 if len(Y) == 1: Y = Y[0] #_addがなければ元に戻す
             else:
                 # numpy変換処理での遅延を避けるため、引数でも指定できるようにする
@@ -895,9 +896,7 @@ class MyModel:
         if len(Y) == 1: Y = Y[0]
         X_test, Y_test = None, None
         if df_test is not None:
-            X_test, Y_test = self.preproc(df_test)
-            if len(X_test) == 1: X_test = X_test[0]
-            if len(Y_test) == 1: Y_test = Y_test[0]
+            X_test, Y_test = self.preproc(df_test, autofix=True, x_proc=True, y_proc=True, row_proc=True)
         # データの数を変えながら探索する
         if not storage:
             self.optuna: optuna.study.Study = optuna.create_study(
