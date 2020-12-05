@@ -29,7 +29,7 @@ from PIL import Image
 from kkimagemods.util.common import makedirs, correct_dirpath
 from kkimagemods.lib.coco import coco_info, CocoManager
 from kkimagemods.util.images import drow_bboxes, convert_seg_point_to_bool, fit_resize
-from imageaug import AugHandler, Augmenter as aug
+#from imageaug import AugHandler, Augmenter as aug
 
 
 class MyDet2(DefaultTrainer):
@@ -39,7 +39,7 @@ class MyDet2(DefaultTrainer):
             dataset_name: str = None, coco_json_path: str=None, image_root: str=None,
             # train params
             cfg: CfgNode=None, max_iter: int=100, is_train: bool=True, aug_json_file_path: str=None, 
-            base_lr: float=0.01, num_workers: int=2, resume: bool=False, lr_steps: (int,int,)=None,
+            base_lr: float=0.01, batch_size: int=1, num_workers: int=3, resume: bool=False, lr_steps: (int,int,)=None,
             # validation param
             validations: List[Tuple[str]]=None, valid_steps: int=100, valid_ndata: int=10,
             # train and test params
@@ -54,10 +54,11 @@ class MyDet2(DefaultTrainer):
         self.coco_json_path_org = coco_json_path
         self.image_root         = image_root
         self.is_train           = is_train
-        self.__register_coco_instances(self.dataset_name, self.coco_json_path, self.image_root) # Coco dataset setting
+        if (self.dataset_name is None or self.coco_json_path is None or self.image_root is None) == False:
+            self.__register_coco_instances(self.dataset_name, self.coco_json_path, self.image_root) # Coco dataset setting
         self.cfg                = cfg if cfg is not None else self.set_config(
             weight_path=weight_path, threshold=threshold, max_iter=max_iter, num_workers=num_workers, 
-            base_lr=base_lr, lr_steps=lr_steps, input_size=input_size, outdir=outdir
+            batch_size=batch_size, base_lr=base_lr, lr_steps=lr_steps, input_size=input_size, outdir=outdir
         )
         # cfg に対する追加の設定
         if is_keyseg:
@@ -115,7 +116,7 @@ class MyDet2(DefaultTrainer):
 
     def set_config(
         self, weight_path: str=None, threshold: float=0.2, max_iter: int=100, num_workers: int=2, 
-        base_lr: float=0.01, lr_steps: (int,int)=None, input_size: tuple=(800,1333,), outdir: str="./output"
+        batch_size: int=1, base_lr: float=0.01, lr_steps: (int,int)=None, input_size: tuple=(800,1333,), outdir: str="./output"
     ) -> CfgNode:
         """
         see https://detectron2.readthedocs.io/modules/config.html#detectron2.config.CfgNode
@@ -128,8 +129,8 @@ class MyDet2(DefaultTrainer):
         cfg.DATASETS.TEST  = (self.dataset_name, )
         cfg.DATALOADER.NUM_WORKERS = num_workers
         cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(self.model_zoo_path) if weight_path is None else weight_path
-        cfg.SOLVER.IMS_PER_BATCH   = num_workers
-        cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128 # faster, and good enough for this toy dataset (default: 512)
+        cfg.SOLVER.IMS_PER_BATCH = batch_size
+        cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 512 # faster, and good enough for this toy dataset (default: 512)
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = threshold if threshold is not None else 0.2  # set the testing threshold for this model
         cfg.INPUT.MIN_SIZE_TRAIN = input_size[0]
         cfg.INPUT.MAX_SIZE_TRAIN = input_size[1]
@@ -360,8 +361,8 @@ class MyDet2(DefaultTrainer):
 
         # 作り直したcocoで再度読み込みさせる
         self.coco_json_path = self.coco_json_path + ".cocomanager.json"
-        del DatasetCatalog. _REGISTERED[  self.dataset_name] # key を削除しないと再登録できない
-        del MetadataCatalog._NAME_TO_META[self.dataset_name] # key を削除しないと再登録できない
+        DatasetCatalog.remove(self.dataset_name)  # key を削除しないと再登録できない
+        MetadataCatalog.remove(self.dataset_name) # key を削除しないと再登録できない
         self.__register_coco_instances(self.dataset_name, self.coco_json_path, self.image_root)
         super().__init__(self.cfg)
         makedirs(outdir, exist_ok=True, remake=True)
@@ -391,8 +392,8 @@ class MyDet2(DefaultTrainer):
             count += 1
             if count > n_output: break
 
-        del DatasetCatalog. _REGISTERED[  self.dataset_name] # key を削除しないと再登録できない
-        del MetadataCatalog._NAME_TO_META[self.dataset_name] # key を削除しないと再登録できない
+        DatasetCatalog.remove(self.dataset_name)  # key を削除しないと再登録できない
+        MetadataCatalog.remove(self.dataset_name) # key を削除しないと再登録できない
         self.coco_json_path = self.coco_json_path_org
         self.__register_coco_instances(self.dataset_name, self.coco_json_path, self.image_root)
         super().__init__(self.cfg)

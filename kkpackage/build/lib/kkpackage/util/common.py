@@ -29,6 +29,15 @@ def get_file_list(dirpath: str, regex_list: List[str] = []) -> List[str]:
         file_list += list(filter(lambda x: len(re.findall(regstr, x)) > 0, file_list_org))
     return file_list if len(regex_list) > 0 else file_list_org
 
+def get_dir_list(dirpath: str, regex_list: List[str] = []) -> List[str]:
+    dirpath = correct_dirpath(dirpath)
+    dirlist_org = os.listdir(dirpath)
+    dirlist_org = [correct_dirpath(dirpath + x) for x in dirlist_org]
+    dirlist = []
+    for regstr in regex_list:
+        dirlist += list(filter(lambda x: len(re.findall(regstr, x)) > 0, dirlist_org))
+    return dirlist if len(regex_list) > 0 else dirlist_org
+
 def rm_files(dirpath: str, regex_list: List[str]):
     for x in get_file_list(dirpath, regex_list=regex_list):
         os.remove(x)
