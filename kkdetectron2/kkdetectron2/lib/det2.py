@@ -7,7 +7,7 @@ import torch
 
 # detectron2
 import detectron2
-from detectron2.engine import DefaultTrainer, DefaultPredictor, HookBase
+from detectron2.engine import DefaultTrainer, DefaultPredictor, HookBase, SimpleTrainer
 from detectron2.data import build_detection_train_loader, DatasetCatalog, MetadataCatalog
 from detectron2.data.datasets import register_coco_instances
 from detectron2.config import get_cfg
@@ -43,7 +43,8 @@ class MyDet2(DefaultTrainer):
             # validation param
             validations: List[Tuple[str]]=None, valid_steps: int=100, valid_ndata: int=10,
             # train and test params
-            model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", weight_path: str=None, is_keyseg: bool=False,
+            model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", weight_path: str=None, 
+            is_keyseg: bool=False, is_bbox_only: bool=False,
             classes: List[str] = None, keypoint_names: List[str] = None, keypoint_flip_map: List[Tuple[str]] = None,
             input_size: tuple=(800, 1333), threshold: float=0.2, outdir: str="./output"
         ):
@@ -64,6 +65,9 @@ class MyDet2(DefaultTrainer):
         if is_keyseg:
             self.cfg.MODEL.MASK_ON     = True
             self.cfg.MODEL.KEYPOINT_ON = True
+        if is_bbox_only:
+            self.cfg.MODEL.MASK_ON     = False
+            self.cfg.MODEL.KEYPOINT_ON = False
         # classes は強制でセットする
         self.cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(classes)
         MetadataCatalog.get(self.dataset_name).thing_classes = classes
@@ -649,19 +653,22 @@ class Validator(HookBase):
         self.cfg = cfg.clone()
         self.cfg.DATASETS.TRAIN = (dataset_name, )
         self._loader = iter(build_detection_train_loader(self.cfg))
-        self.trainer: DefaultTrainer = trainer
+        self.trainer = trainer
         self.steps = steps
         self.ndata = ndata
         self.loss_dict = {}
+        self.data_time = 0
         
     def before_step(self):
         # before に入れないと、after step の後の storage.step で storage._latest~~ が初期化されてしまう
-        self.trainer._write_metrics(self.loss_dict)
+        if self.loss_dict:
+            self.trainer._trainer._write_metrics(self.loss_dict, self.data_time)
 
     def after_step(self):
         if self.trainer.iter > 0 and self.trainer.iter % self.steps == 0:
             list_dict = []
             # self.trainer.model.eval() # これをすると model(data) の動作が変わるのでやらない。
+            start = time.perf_counter()
             with torch.no_grad():
                 for _ in range(self.ndata):
                     data = next(self._loader)
@@ -674,9 +681,10 @@ class Validator(HookBase):
             for key in list_dict[0].keys():
                 loss_dict[key] = np.mean([dictwk[key] for dictwk in list_dict])
             loss_dict = {
-                self.cfg.DATASETS.TRAIN[0] + "_" + k: v.item() for k, v in comm.reduce_dict(loss_dict).items()
+                self.cfg.DATASETS.TRAIN[0] + "_" + k: torch.tensor(v.item()) for k, v in comm.reduce_dict(loss_dict).items()
             }
             self.loss_dict = loss_dict
+            self.data_time = time.perf_counter() - start
 
 
 
