@@ -7,8 +7,9 @@ from kkutils.util.com import is_callable
 
 __all__ = [
     "lgb_custom_objective",
-    "lgb_custom_eval"
+    "lgb_custom_eval",
 ]
+
 
 def lgb_custom_objective(y_pred: np.ndarray, data: lgb.Dataset, func_loss, is_lgbdataset: bool=True):
     """
@@ -47,7 +48,7 @@ def lgb_custom_eval(y_pred: np.ndarray, data: lgb.Dataset, func_loss, func_name:
         data:
             train_set に set した値
         func_loss:
-            y_pred, y_true を入力に持ち、grad, hess を return する関数
+            y_pred, y_true を入力に持つ
     """
     if is_lgbdataset == False:
         y_true = y_pred.copy()
@@ -60,4 +61,4 @@ def lgb_custom_eval(y_pred: np.ndarray, data: lgb.Dataset, func_loss, func_name:
         # multi class の場合
         y_pred = y_pred.reshape(-1 , y_true.shape[0]).T
     value = func_loss(y_pred, y_true)
-    return func_name, np.mean(value), is_higher_better
+    return func_name, value, is_higher_better

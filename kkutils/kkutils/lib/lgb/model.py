@@ -1,10 +1,17 @@
+import datetime
+import pandas as pd
+import numpy as np
 from sklearn.exceptions import NotFittedError
-from typing import List
-from lightgbm import LGBMClassifier, LGBMRegressor, LGBMModel
+from typing import List, Callable
+from functools import partial
+import lightgbm as lgb
+from lightgbm import LGBMClassifier, LGBMRegressor, LGBMModel, Dataset
 from lightgbm.callback import record_evaluation, EarlyStopException, _format_eval_result
+from optuna.integration import lightgbm as lgbtune
 
 # local package
-from kkutils.util.numpy import softmax, sigmoid
+from kkutils.util.ml import lgb_custom_eval, lgb_custom_objective
+from kkutils.util.numpy import calc_grad_hess, func_embed
 from kkutils.util.com import set_logger, MyLogger
 logger = set_logger(__name__)
 
@@ -13,6 +20,9 @@ __all__ = [
     "KkLGBMModelBase",
     "KkLGBMClassifier",
     "KkLGBMRegressor",
+    "train",
+    "autotuner",
+    "tune",
 ]
 
 
@@ -155,3 +165,163 @@ class KkLGBMRegressor(LGBMRegressor, KkLGBMModelBase):
         super()._fit(X, y, *argv, **kwargs)
     def fit_common(self, X, y, *argv, **kwargs):
         super().fit(X, y, *argv, **kwargs)
+
+
+class KkLgbDataset(Dataset):
+    """
+    Usage::
+        >>> dataset = KkLgbDataset(x_train)
+        >>> dataset.set_culstom_label(y_train)
+    """
+    def set_culstom_label(self, label: np.ndarray):
+        self.label     = np.arange(label.shape[0]).astype(int)
+        self.ndf_label = label
+    def get_culstom_label(self, indexes: np.ndarray) -> np.ndarray:
+        return self.ndf_label[indexes]
+
+
+def _train(
+    params: dict, x_train: np.ndarray, y_train: np.ndarray, loss_func, *args, 
+    x_valid: np.ndarray=None, y_valid: np.ndarray=None, 
+    loss_func_grad: Callable[[float, float], float]=None, 
+    loss_func_eval: Callable[[float, float], float]=None, 
+    func_train=None,
+    **kwargs
+):
+    dataset = KkLgbDataset(x_train)
+    dataset.set_culstom_label(y_train)
+    if not (isinstance(x_valid, list) or isinstance(x_valid, tuple)):
+        x_valid = [] if x_valid is None else [x_valid]
+        y_valid = [] if y_valid is None else [y_valid]
+    list_dataset_valid = [dataset]
+    for _x_valid, _y_valid in zip(x_valid, y_valid):
+        list_dataset_valid.append(KkLgbDataset(_x_valid))
+        list_dataset_valid[-1].set_culstom_label(_y_valid)
+    fobj = None
+    if loss_func_grad is None and (not isinstance(loss_func, str)):
+        loss_func_grad = partial(calc_grad_hess, loss_func=loss_func)
+    if loss_func_grad is not None:
+        fobj = lambda x,y: lgb_custom_objective(x, y, loss_func_grad, is_lgbdataset=True)
+    feval = None
+    if loss_func_eval is not None and (not isinstance(loss_func_eval, str)):
+        feval = lambda x,y: lgb_custom_eval(x, y, func_embed(loss_func_eval, calc_type="mean"), "myloss", is_higher_better=False, is_lgbdataset=True)
+    elif loss_func_eval is None:
+        feval = lambda x,y: lgb_custom_eval(x, y, func_embed(loss_func,      calc_type="mean"), "myloss", is_higher_better=False, is_lgbdataset=True)
+    if fobj  is None and isinstance(loss_func,      str): params["objective"] = loss_func
+    if feval is None and isinstance(loss_func_eval, str): params["metric"]    = loss_func_eval
+    evals_result = {} # metric の履歴
+    obj = func_train(
+        params, dataset, 
+        valid_sets=list_dataset_valid, valid_names=["train"]+["valid"+str(i) for i in range(len(list_dataset_valid)-1)],
+        fobj =fobj, feval=feval, evals_result=evals_result,
+        **kwargs
+    )
+    return obj
+
+
+def train(
+    params, x_train, y_train, loss_func: str, *args, 
+    x_valid: np.ndarray=None, y_valid: np.ndarray=None, 
+    loss_func_grad: Callable[[float, float], float]=None, 
+    loss_func_eval: Callable[[float, float], float]=None, 
+    **kwargs
+):
+    return _train(
+        params, x_train, y_train, loss_func, *args, 
+        x_valid=x_valid, y_valid=y_valid,
+        loss_func_grad=loss_func_grad,
+        loss_func_eval=loss_func_eval,
+        func_train=lgb.train,
+        **kwargs
+    )
+
+
+def autotuner(
+    params: dict, x_train: np.ndarray, y_train: np.ndarray, loss_func: str, *args, 
+    x_valid: np.ndarray=None, y_valid: np.ndarray=None, 
+    loss_func_grad: Callable[[float, float], float]=None, 
+    loss_func_eval: Callable[[float, float], float]=None, 
+    **kwargs
+):
+    return _train(
+        params, x_train, y_train, *args, 
+        x_valid=x_valid, y_valid=y_valid,
+        loss_func=loss_func, loss_func_grad=loss_func_grad,
+        loss_func_eval=loss_func_eval,
+        func_train=lgbtune.train,
+        **kwargs
+    )
+
+
+def tune(
+    x_train: np.ndarray, y_train: np.ndarray, 
+    loss_func, n_trials: int, params: dict=None,
+    x_valid: np.ndarray=None, y_valid: np.ndarray=None, 
+    loss_func_grad: Callable[[float, float], float]=None, 
+    loss_func_eval: Callable[[float, float], float]=None, 
+    **kwargs
+):
+    import optuna
+    from kkutils.util.ml import create_optuna_params
+    params = {
+        "task"             : ["const", "train"],
+        'verbosity'        : ["const", -1],
+        'boosting'         : ["const", "gbdt"],
+        "learning_rate"    : ["const", 0.03],
+        "max_depth"        : ["const", -1],
+        "num_iterations"   : ["const", 100],
+        'lambda_l1'        : ["log", 1e-8, 10.0], 
+        'lambda_l2'        : ["log", 1e-8, 10.0], 
+        'num_leaves'       : ["const", 100],
+        'feature_fraction' : ["float", 0.01, 0.8],
+        'bagging_fraction' : ["float", 0.01, 0.8],
+        'bagging_freq'     : ["int", 1, 7],
+        'min_child_samples': ["int", 1, 100],
+    } if params is None else params
+    if len(y_train.shape) == 2:
+        params["num_class"] = ["const", y_train.shape[-1]]
+    def objective(
+        trial, params=None, x_train=None, y_train=None,
+        x_valid=None, y_valid=None,
+        loss_func=None, loss_func_grad=None,
+        loss_func_eval=None, **kwargs
+    ):
+        _params = create_optuna_params(params, trial)
+        gbm = _train(
+            _params, x_train=x_train, y_train=y_train,
+            x_valid=x_valid, y_valid=y_valid,
+            loss_func=loss_func, loss_func_grad=loss_func_grad,
+            loss_func_eval=loss_func_eval,
+            func_train=lgb.train,
+            **kwargs
+        )
+        func = func_embed(loss_func_eval, calc_type="mean")
+        val  = func(gbm.predict(x_valid), y_valid)
+        return val
+    _objective = partial(
+        objective, 
+        params=params,
+        x_train=x_train, y_train=y_train,
+        x_valid=x_valid, y_valid=y_valid,
+        loss_func=loss_func, loss_func_grad=loss_func_grad,
+        loss_func_eval=loss_func_eval,
+        **kwargs
+    )
+    study = optuna.create_study(
+        study_name='optuna_'+datetime.datetime.now().strftime("%Y%m%d%H%M%S"),
+        storage='sqlite:///optuna_'+datetime.datetime.now().strftime("%Y%m%d%H%M%S")+'.db',
+    )
+    # パラメータ探索
+    study.optimize(_objective, n_trials=n_trials)
+    # 結果を保存する
+    df_optuna = pd.DataFrame()
+    for i_trial in study.trials:
+        sewk = pd.Series(i_trial.params)
+        sewk["value"]  = i_trial.value
+        df_optuna = df_optuna.append(sewk, ignore_index=True)
+    dict_param_ret = {}
+    for key, val in  params.items():
+        if val[0] == "const": dict_param_ret[key] = val[-1]
+    for key, val in  study.best_params.items():
+        dict_param_ret[key] = val
+    return df_optuna, dict_param_ret

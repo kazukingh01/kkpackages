@@ -13,10 +13,33 @@ logger = set_logger(__name__)
 
 
 __all__ = [
+    "create_optuna_params",
     "optuna_base_function",
     "search_hyperparams_by_optuna",
     "get_optuna_study_from_db",
 ]
+
+
+def create_optuna_params(dict_param: dict, trial):
+    """
+    Params::
+        dict_param = {
+            "learning_rate":["category",0.05,0.1,0.2,0.3,0.5], "n_estimators":["int",500,1500], "max_depth":["int",3,10], 
+            "gamma":["float",0.,0.3], "min_child_weight":["int",1,20], "subsample":["step", 0.5, 0.9, 0.1], 
+            "colsample_bytree":["step", 0.1, 0.9, 0.1], "random_state":["const",1], "n_jobs":["const", -1]
+        }
+    """
+    dict_input = {}
+    for x in dict_param.keys():
+        value = dict_param.get(x)
+        if type(value) != list: logger.raise_error(f"value: {value} is not list.") # リスト形式でない場合はエラー
+        if   value[0] == "const"   : dict_input[x] = value[1]
+        elif value[0] == "int"     : dict_input[x] = trial.suggest_int(             x, value[1], value[2])
+        elif value[0] == "float"   : dict_input[x] = trial.suggest_uniform(         x, value[1], value[2])
+        elif value[0] == "log"     : dict_input[x] = trial.suggest_loguniform(      x, value[1], value[2])
+        elif value[0] == "step"    : dict_input[x] = trial.suggest_discrete_uniform(x, value[1], value[2], value[3])
+        elif value[0] == "category": dict_input[x] = trial.suggest_categorical(     x, value[1:])
+    return dict_input
 
 
 def optuna_base_function(
@@ -45,16 +68,7 @@ def optuna_base_function(
     logger.info("START")
 
     # trial の設定. const とか int とかは自前で用意した解釈を簡単にするためのもの
-    dict_input = {}
-    for x in dict_param.keys():
-        value = dict_param.get(x)
-        if type(value) != list: logger.raise_error(f"value: {value} is not list.") # リスト形式でない場合はエラー
-        if   value[0] == "const"   : dict_input[x] = value[1]
-        elif value[0] == "int"     : dict_input[x] = trial.suggest_int(             x, value[1], value[2])
-        elif value[0] == "float"   : dict_input[x] = trial.suggest_uniform(         x, value[1], value[2])
-        elif value[0] == "log"     : dict_input[x] = trial.suggest_loguniform(      x, value[1], value[2])
-        elif value[0] == "step"    : dict_input[x] = trial.suggest_discrete_uniform(x, value[1], value[2], value[3])
-        elif value[0] == "category": dict_input[x] = trial.suggest_categorical(     x, value[1:])
+    dict_input = create_optuna_params(dict_param, trial)
     model_tuna = model.__class__(**dict_input)
     logger.info(model_tuna)
 

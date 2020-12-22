@@ -1,4 +1,3 @@
-from lhafile import Lhafile
 import json
 from typing import List
 
@@ -13,6 +12,7 @@ __all__ = [
 
 
 def unpack_lzh(filepath: str, encoding: str="shift-jisx0213", is_save: bool=False, save_outdir="./") -> List[str]:
+    from lhafile import Lhafile
     archive = Lhafile(filepath)
     list_str = []
     for fmem in archive.filelist:
