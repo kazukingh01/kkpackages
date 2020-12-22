@@ -255,7 +255,7 @@ def autotuner(
 
 def tune(
     x_train: np.ndarray, y_train: np.ndarray, 
-    loss_func, n_trials: int, params: dict=None,
+    loss_func, n_trials: int, params_add: dict=None,
     x_valid: np.ndarray=None, y_valid: np.ndarray=None, 
     loss_func_grad: Callable[[float, float], float]=None, 
     loss_func_eval: Callable[[float, float], float]=None, 
@@ -265,19 +265,25 @@ def tune(
     from kkutils.util.ml import create_optuna_params
     params = {
         "task"             : ["const", "train"],
-        'verbosity'        : ["const", -1],
+        'verbosity'        : ["const", 1],
         'boosting'         : ["const", "gbdt"],
+        "n_jobs"           : ["const", 1],
+        "random_seed"      : ["const", 1],
         "learning_rate"    : ["const", 0.03],
         "max_depth"        : ["const", -1],
-        "num_iterations"   : ["const", 100],
-        'lambda_l1'        : ["log", 1e-8, 10.0], 
-        'lambda_l2'        : ["log", 1e-8, 10.0], 
+        "num_iterations"   : ["const", 1000],
+        'bagging_freq'     : ["const", 0],
         'num_leaves'       : ["const", 100],
+        'lambda_l1'        : ["log", 1e-8, 100.0],
+        'lambda_l2'        : ["log", 1e-8, 100.0],
+        "min_hessian"      : ["log", 1e-5, 100.0],
         'feature_fraction' : ["float", 0.01, 0.8],
         'bagging_fraction' : ["float", 0.01, 0.8],
-        'bagging_freq'     : ["int", 1, 7],
         'min_child_samples': ["int", 1, 100],
-    } if params is None else params
+    }
+    if params_add is not None:
+        for x, y in params_add.items():
+            params[x] = y
     if len(y_train.shape) == 2:
         params["num_class"] = ["const", y_train.shape[-1]]
     def objective(

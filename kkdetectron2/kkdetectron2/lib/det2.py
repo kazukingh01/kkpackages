@@ -5,6 +5,8 @@ import cv2
 from typing import List, Tuple
 import torch
 
+from kkimgaug.lib.aug_det2 import Mapper
+"""
 # detectron2
 import detectron2
 from detectron2.engine import DefaultTrainer, DefaultPredictor, HookBase, SimpleTrainer
@@ -21,15 +23,26 @@ from detectron2.data import detection_utils as utils
 from detectron2.data import transforms as T
 from fvcore.common.config import CfgNode
 setup_logger()
-
 from fvcore.common.file_io import PathManager
 from PIL import Image
+"""
+# detectron2 packages
+from detectron2.engine import DefaultTrainer, DefaultPredictor, HookBase
+from detectron2.config import get_cfg
+from detectron2 import model_zoo
+from detectron2.data.datasets import register_coco_instances
+from detectron2.utils.visualizer import Visualizer, ColorMode
+from detectron2.data import build_detection_train_loader, DatasetCatalog, MetadataCatalog
+from detectron2.data.dataset_mapper import DatasetMapper
+import detectron2.data.detection_utils as utils
+import detectron2.data.transforms as T
+from fvcore.common.config import CfgNode
+import detectron2.utils.comm as comm
 
 # local package
 from kkimagemods.util.common import makedirs, correct_dirpath
 from kkimagemods.lib.coco import coco_info, CocoManager
 from kkimagemods.util.images import drow_bboxes, convert_seg_point_to_bool, fit_resize
-#from imageaug import AugHandler, Augmenter as aug
 
 
 class MyDet2(DefaultTrainer):
@@ -46,7 +59,7 @@ class MyDet2(DefaultTrainer):
             model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", weight_path: str=None, 
             is_keyseg: bool=False, is_bbox_only: bool=False,
             classes: List[str] = None, keypoint_names: List[str] = None, keypoint_flip_map: List[Tuple[str]] = None,
-            input_size: tuple=(800, 1333), threshold: float=0.2, outdir: str="./output"
+            input_size: tuple=((640, 672, 704, 736, 768, 800), 1333), threshold: float=0.2, outdir: str="./output"
         ):
         # coco dataset
         self.dataset_name       = dataset_name
@@ -77,7 +90,8 @@ class MyDet2(DefaultTrainer):
             MetadataCatalog.get(self.dataset_name).keypoint_names = keypoint_names
             MetadataCatalog.get(self.dataset_name).keypoint_flip_map = keypoint_flip_map
             MetadataCatalog.get(self.dataset_name).keypoint_connection_rules = [(x[0], x[1], (255,0,0)) for x in keypoint_flip_map] # Visualizer の内部で使用している
-        self.mapper = None if aug_json_file_path is None else MyMapper(self.cfg, aug_json_file_path, is_train=self.is_train)
+        self.mapper = None if aug_json_file_path is None else Mapper(self.cfg, config=aug_json_file_path)
+        self.cfg.INPUT.RANDOM_FLIP = "horizontal" if self.mapper is None else "none" # Flip は augmentation があればそっちを使う
 
         if self.is_train:
             # train setting
@@ -138,8 +152,8 @@ class MyDet2(DefaultTrainer):
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = threshold if threshold is not None else 0.2  # set the testing threshold for this model
         cfg.INPUT.MIN_SIZE_TRAIN = input_size[0]
         cfg.INPUT.MAX_SIZE_TRAIN = input_size[1]
-        cfg.INPUT.MIN_SIZE_TEST = input_size[0]
-        cfg.INPUT.MAX_SIZE_TEST = input_size[1]
+        cfg.INPUT.MIN_SIZE_TEST  = input_size[0]
+        cfg.INPUT.MAX_SIZE_TEST  = input_size[1]
         if self.is_train:
             cfg.SOLVER.BASE_LR = base_lr # pick a good LR
             cfg.SOLVER.MAX_ITER = max_iter    # 300 iterations seems good enough for this toy dataset; you may need to train longer for a practical dataset
@@ -685,112 +699,6 @@ class Validator(HookBase):
             }
             self.loss_dict = loss_dict
             self.data_time = time.perf_counter() - start
-
-
-
-class MyMapper(DatasetMapper):
-    def __init__(self, cfg, json_file_path, is_train=True):
-        super().__init__(cfg, is_train=is_train)
-        self.aug_handler = AugHandler.load_from_path(json_file_path)
-        if is_train: 
-            self.tfm_gens = self.tfm_gens[:-1]
-            #self.tfm_gens.insert(0, T.RandomFlip(prob=0.5, horizontal=True,  vertical=False))
-            self.tfm_gens.insert(0, T.RandomCrop("relative_range", (0.8, 1.0)))
-            self.tfm_gens.insert(0, T.RandomRotation([0, 90, 180, 270], sample_style="choice") )
-    
-    def __call__(self, dataset_dict):
-        """
-        Args:
-            dataset_dict (dict): Metadata of one image, in Detectron2 Dataset format.
-
-        Returns:
-            dict: a format that builtin models in detectron2 accept
-        """
-        dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
-        # USER: Write your own image loading if it's not from a file
-        image = utils.read_image(dataset_dict["file_name"], format=self.img_format)
-        utils.check_image_size(dataset_dict, image)
-
-        ### my code ###
-        ## segmentaion の annotation を一旦退避して、後で追加する
-        seg_bk = [dictwk["segmentation"] for dictwk in dataset_dict["annotations"]]
-        for i in range(len(dataset_dict["annotations"])):
-            dataset_dict["annotations"][i].pop("segmentation")
-        image, dataset_dict = self.aug_handler(image=image, dataset_dict_detectron=dataset_dict)
-        for i in range(len(dataset_dict["annotations"])):
-            dataset_dict["annotations"][i]["segmentation"] = seg_bk[i]
-        ### my code ###
-
-        if "annotations" not in dataset_dict:
-            image, transforms = T.apply_transform_gens(
-                ([self.crop_gen] if self.crop_gen else []) + self.tfm_gens, image
-            )
-        else:
-            # Crop around an instance if there are instances in the image.
-            # USER: Remove if you don't use cropping
-            if self.crop_gen:
-                crop_tfm = utils.gen_crop_transform_with_instance(
-                    self.crop_gen.get_crop_size(image.shape[:2]),
-                    image.shape[:2],
-                    np.random.choice(dataset_dict["annotations"]),
-                )
-                image = crop_tfm.apply_image(image)
-            image, transforms = T.apply_transform_gens(self.tfm_gens, image)
-            if self.crop_gen:
-                transforms = crop_tfm + transforms
-
-        image_shape = image.shape[:2]  # h, w
-
-        # Pytorch's dataloader is efficient on torch.Tensor due to shared-memory,
-        # but not efficient on large generic data structures due to the use of pickle & mp.Queue.
-        # Therefore it's important to use torch.Tensor.
-        dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
-
-        # USER: Remove if you don't use pre-computed proposals.
-        if self.load_proposals:
-            utils.transform_proposals(
-                dataset_dict, image_shape, transforms, self.min_box_side_len, self.proposal_topk
-            )
-
-        if not self.is_train:
-            # USER: Modify this if you want to keep them for some reason.
-            dataset_dict.pop("annotations", None)
-            dataset_dict.pop("sem_seg_file_name", None)
-            return dataset_dict
-
-        if "annotations" in dataset_dict:
-            # USER: Modify this if you want to keep them for some reason.
-            for anno in dataset_dict["annotations"]:
-                if not self.mask_on:
-                    anno.pop("segmentation", None)
-                if not self.keypoint_on:
-                    anno.pop("keypoints", None)
-
-            # USER: Implement additional transformations if you have other types of data
-            annos = [
-                utils.transform_instance_annotations(
-                    obj, transforms, image_shape, keypoint_hflip_indices=self.keypoint_hflip_indices
-                )
-                for obj in dataset_dict.pop("annotations")
-                if obj.get("iscrowd", 0) == 0
-            ]
-            instances = utils.annotations_to_instances(
-                annos, image_shape, mask_format=self.mask_format
-            )
-            # Create a tight bounding box from masks, useful when image is cropped
-            if self.crop_gen and instances.has("gt_masks"):
-                instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
-            dataset_dict["instances"] = utils.filter_empty_instances(instances)
-
-        # USER: Remove if you don't do semantic/panoptic segmentation.
-        if "sem_seg_file_name" in dataset_dict:
-            with PathManager.open(dataset_dict.pop("sem_seg_file_name"), "rb") as f:
-                sem_seg_gt = Image.open(f)
-                sem_seg_gt = np.asarray(sem_seg_gt, dtype="uint8")
-            sem_seg_gt = transforms.apply_segmentation(sem_seg_gt)
-            sem_seg_gt = torch.as_tensor(sem_seg_gt.astype("long"))
-            dataset_dict["sem_seg"] = sem_seg_gt
-        return dataset_dict
 
 
 
