@@ -265,7 +265,7 @@ def tune(
     from kkutils.util.ml import create_optuna_params
     params = {
         "task"             : ["const", "train"],
-        'verbosity'        : ["const", 1],
+        'verbosity'        : ["const", -1],
         'boosting'         : ["const", "gbdt"],
         "n_jobs"           : ["const", 1],
         "random_seed"      : ["const", 1],
