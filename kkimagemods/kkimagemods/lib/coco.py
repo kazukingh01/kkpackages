@@ -1263,8 +1263,8 @@ class Labelme2Coco:
         self.index_categories_name = {x:i for i, x in enumerate(categories_name)}
         self.keypoints = keypoints
         self.keypoints_belong = keypoints_belong
-        self.index_keypoints = {x:i for i, x in enumerate(keypoints)}
-        self.skelton   = skelton
+        self.index_keypoints = {x:i for i, x in enumerate(keypoints)} if keypoints is not None else {}
+        self.skelton = skelton
 
 
     def read_json(self, json_path: str) -> pd.DataFrame:

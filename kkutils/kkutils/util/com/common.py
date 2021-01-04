@@ -72,10 +72,13 @@ def makedirs(dirpath: str, exist_ok: bool = False, remake: bool = False):
     if remake and os.path.isdir(dirpath): shutil.rmtree(dirpath)
     os.makedirs(dirpath, exist_ok = exist_ok)
 
-def get_args() -> dict:
+def get_args(args: str=None) -> dict:
     dict_ret = {}
-    args = sys.argv
-    dict_ret["__fname"] = args[0]
+    if args is None:
+        args = sys.argv
+        dict_ret["__fname"] = args[0]
+    else:
+        args = re.sub("\s+", " ", args).split(" ")
     for i, x in enumerate(args):
         if   x[:4] == "----":
             # この引数の後にはLISTで格納する

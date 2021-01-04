@@ -6,26 +6,7 @@ from typing import List, Tuple
 import torch
 
 from kkimgaug.lib.aug_det2 import Mapper
-"""
-# detectron2
-import detectron2
-from detectron2.engine import DefaultTrainer, DefaultPredictor, HookBase, SimpleTrainer
-from detectron2.data import build_detection_train_loader, DatasetCatalog, MetadataCatalog
-from detectron2.data.datasets import register_coco_instances
-from detectron2.config import get_cfg
-from detectron2 import model_zoo
-import detectron2.utils.comm as comm
-from detectron2.utils.visualizer import Visualizer
-from detectron2.utils.visualizer import ColorMode
-from detectron2.utils.logger import setup_logger
-from detectron2.data.dataset_mapper import DatasetMapper
-from detectron2.data import detection_utils as utils
-from detectron2.data import transforms as T
-from fvcore.common.config import CfgNode
-setup_logger()
-from fvcore.common.file_io import PathManager
-from PIL import Image
-"""
+
 # detectron2 packages
 from detectron2.engine import DefaultTrainer, DefaultPredictor, HookBase
 from detectron2.config import get_cfg
@@ -52,12 +33,13 @@ class MyDet2(DefaultTrainer):
             dataset_name: str = None, coco_json_path: str=None, image_root: str=None,
             # train params
             cfg: CfgNode=None, max_iter: int=100, is_train: bool=True, aug_json_file_path: str=None, 
-            base_lr: float=0.01, batch_size: int=1, num_workers: int=3, resume: bool=False, lr_steps: (int,int,)=None,
+            base_lr: float=0.01, batch_size: int=1, num_workers: int=3, resume: bool=False, 
+            lr_steps: (int,int,)=None, lr_warmup: int=1000, 
             # validation param
             validations: List[Tuple[str]]=None, valid_steps: int=100, valid_ndata: int=10,
             # train and test params
             model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", weight_path: str=None, 
-            is_keyseg: bool=False, is_bbox_only: bool=False,
+            is_keyseg: bool=False, is_bbox_only: bool=False, save_step: int=5000,
             classes: List[str] = None, keypoint_names: List[str] = None, keypoint_flip_map: List[Tuple[str]] = None,
             input_size: tuple=((640, 672, 704, 736, 768, 800), 1333), threshold: float=0.2, outdir: str="./output"
         ):
@@ -81,6 +63,11 @@ class MyDet2(DefaultTrainer):
         if is_bbox_only:
             self.cfg.MODEL.MASK_ON     = False
             self.cfg.MODEL.KEYPOINT_ON = False
+        self.cfg.INPUT.RANDOM_FLIP = "none"
+        self.cfg.SOLVER.CHECKPOINT_PERIOD = save_step
+        self.cfg.SOLVER.WARMUP_FACTOR = 1.0 / lr_warmup
+        self.cfg.SOLVER.WARMUP_ITERS = lr_warmup
+        self.cfg.SOLVER.WARMUP_METHOD = "linear"
         # classes は強制でセットする
         self.cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(classes)
         MetadataCatalog.get(self.dataset_name).thing_classes = classes
@@ -91,7 +78,6 @@ class MyDet2(DefaultTrainer):
             MetadataCatalog.get(self.dataset_name).keypoint_flip_map = keypoint_flip_map
             MetadataCatalog.get(self.dataset_name).keypoint_connection_rules = [(x[0], x[1], (255,0,0)) for x in keypoint_flip_map] # Visualizer の内部で使用している
         self.mapper = None if aug_json_file_path is None else Mapper(self.cfg, config=aug_json_file_path)
-        self.cfg.INPUT.RANDOM_FLIP = "horizontal" if self.mapper is None else "none" # Flip は augmentation があればそっちを使う
 
         if self.is_train:
             # train setting
@@ -197,16 +183,17 @@ class MyDet2(DefaultTrainer):
                 _x1 = _x1 if _x1 >= 0 else 0
                 imgwk = img[_y1:_y2, _x1:_x2, :].copy()
                 output_list.append(imgwk)
-        elif type(_class) == str:
+        elif isinstance(_class, list) or isinstance(_class, str):
+            if isinstance(_class, str): _class = [_class]
             for i, index in enumerate(classes):
-                if MetadataCatalog.get(self.dataset_name).thing_classes[index] == _class:
+                if MetadataCatalog.get(self.dataset_name).thing_classes[index] in _class:
                     x1, y1, x2, y2 = ndf[i]
                     _y1, _y2, _x1, _x2 = int(y1)-padding, int(y2)+padding, int(x1)-padding, int(x2)+padding
                     _y1 = _y1 if _y1 >= 0 else 0
                     _x1 = _x1 if _x1 >= 0 else 0
                     imgwk = img[_y1:_y2, _x1:_x2, :].copy()
                     output_list.append(imgwk)
-        elif type(_class) == int:
+        elif isinstance(_class, int):
             x1, y1, x2, y2 = ndf[_class]
             _y1, _y2, _x1, _x2 = int(y1)-padding, int(y2)+padding, int(x1)-padding, int(x2)+padding
             _y1 = _y1 if _y1 >= 0 else 0
@@ -658,6 +645,67 @@ class MyDet2(DefaultTrainer):
                 dfwk = pd.DataFrame([x], columns=["image_path"])
             df = pd.concat([df, dfwk], ignore_index=True, sort=False)
         return df
+
+
+def create_model(args: dict):
+    """
+    Usage::
+        train.py
+            from kkutils.util.com import get_args
+            args = get_args()
+            model(args)
+        python train.py  --cocot ./train/coco.json --train ./train/ --outdir ./output --save 200 \
+        --dname mark ----classes bracket distribution_board distributor downlight interphone light outlet plumbing spotlight wiring \
+        --iter 5000 --batch 5 --njob 5 --model_zoo Misc/cascade_mask_rcnn_R_50_FPN_3x.yaml --aug ./config.json \
+        ----minsize 402 434 468 500 532 564 596 --maxsize 1033 --lr 0.01 --warmup 200 \
+        ---bbox --cocov ./test_crop/coco.json --valid ./test_crop/ --batchv 4
+    """
+    # load coco file
+    coco = CocoManager()
+    if args.get("cocot") is not None:
+        coco.add_json(args.get("cocot"))
+    outdir       = args.get("outdir") if args.get("outdir") is not None else "./output/"
+    imgdir_train = args.get("train")
+    imgdir_valid = args.get("valid")
+    weight_path  = args.get("weight") # 設定がなかったらNoneになる
+    model_zoo    = "COCO-Detection/faster_rcnn_R_50_FPN_3x.yaml" if args.get("model_zoo") is None else args.get("model_zoo")
+    classes      = args.get("classes") if args.get("classes") is not None else [args.get("dname")]
+    input_size   = None
+    if args.get("train") is not None:
+        input_size = (
+            tuple([int(x) for x in args.get("minsize")]) if args.get("minsize") is not None and isinstance(args.get("minsize"), list) else (int(args.get("minsize")) if args.get("minsize") is not None and isinstance(args.get("minsize"), str) else (640, 672, 704, 736, 768, 800, 832, 864, 896, 928, 960)), 
+            tuple([int(x) for x in args.get("maxsize")]) if args.get("maxsize") is not None and isinstance(args.get("maxsize"), list) else (int(args.get("maxsize")) if args.get("maxsize") is not None and isinstance(args.get("maxsize"), str) else 1333)
+        )
+    else:
+        input_size = (
+            tuple([int(x) for x in args.get("minsize")]) if args.get("minsize") is not None and isinstance(args.get("minsize"), list) else (int(args.get("minsize")) if args.get("minsize") is not None and isinstance(args.get("minsize"), str) else 800), 
+            tuple([int(x) for x in args.get("maxsize")]) if args.get("maxsize") is not None and isinstance(args.get("maxsize"), list) else (int(args.get("maxsize")) if args.get("maxsize") is not None and isinstance(args.get("maxsize"), str) else 1333)
+        )
+    det2 = MyDet2(
+        dataset_name=args.get("dname") if args.get("dname") is not None else "mydataset",
+        coco_json_path=args.get("cocot"),
+        image_root=imgdir_train,
+        outdir=outdir,
+        model_zoo_path=model_zoo,
+        input_size=input_size, 
+        weight_path=weight_path,
+        resume=False if args.get("resume") is None else True,
+        classes=classes,
+        threshold=0.8 if args.get("thre") is None else float(args.get("thre")), 
+        max_iter=1000 if args.get("iter") is None else int(args.get("iter")),
+        is_train=True if args.get("train") is not None else False, 
+        is_bbox_only=False if args.get("bbox") is None else True,
+        save_step=5000 if args.get("save") is None else int(args.get("save")),
+        aug_json_file_path=None if args.get("aug") is None else args.get("aug"), 
+        base_lr=0.001 if args.get("lr") is None else float(args.get("lr")),
+        lr_steps=None if args.get("step") is None else (int(args.get("step")[0]), int(args.get("step")[1]), ),
+        lr_warmup=1000 if args.get("warmup") is None else int(args.get("warmup")),
+        batch_size=2 if args.get("batch") is None else int(args.get("batch")), 
+        num_workers=2 if args.get("njob") is None else int(args.get("njob")),
+        validations=[("valid1", args.get("cocov"), imgdir_valid), ] if args.get("cocov") is not None else None, 
+        valid_steps=100, valid_ndata=int(args.get("batchv")) if args.get("batchv") is not None else 1,
+    )
+    return det2
 
 
 
