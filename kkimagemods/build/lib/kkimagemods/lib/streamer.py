@@ -4,15 +4,15 @@ import os
 from typing import List, Tuple
 
 # logger の 定義
-from kkimagemods.util.logger import set_logger
+from kkpackage.util.logger import set_logger
 logger = set_logger(__name__)
 
 # 自作utilのimport
-from kkimagemods.util.common import check_type, correct_dirpath
+from kkpackage.util.common import check_type, correct_dirpath
 
 class BaseStreamer:
     def __init__(self):
-        self.cap    = cv2.VideoCapture()
+        self.cap = cv2.VideoCapture()
     
     def __del__(self):
         self.cap.release()
@@ -45,12 +45,21 @@ class Streamer(BaseStreamer):
     def __init__(self, src):
         super().__init__()
         check_type(src, [int, str]) # void function. 型をチェックする
-        self.src        = src
-        self.is_next    = True
-        self.cap        = cv2.VideoCapture(src)
-        self.frame_cnt  = 0
+        self.src       = src
+        self.is_next   = True
+        self.cap       = cv2.VideoCapture(src)
+        self.frame_cnt = 0
         logger.info(f"{self.__class__.__name__} is created")
-    
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        _, frame = self.get_frame()
+        if self.is_next == False:
+            raise StopIteration()
+        return frame
+
     def get_frame(self) -> (bool, np.ndarray):
         """
         cap の frame を読み取って、nextグラグとframeを返却します。

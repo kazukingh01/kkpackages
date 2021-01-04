@@ -1,6 +1,31 @@
 from typing import List, Tuple
 import sys, os, glob, re, shutil, pickle, datetime
 
+
+__all__ = [
+    "is_callable",
+    "check_type",
+    "correct_dirpath",
+    "get_file_list",
+    "get_dir_list",
+    "rm_files",
+    "makedirs",
+    "get_args",
+    "check_args",
+    "str_to_datetime",
+    "str_to_date",
+    "str_to_time",
+    "args_date",
+    "save_pickle",
+    "load_pickle",
+    "strfind",
+    "conv_str_auto",
+    "basename_url",
+    "check_list_depth",
+    "get_filename",
+]
+
+
 def is_callable(class_: object, func_: str, list_index=None) -> bool:
     """ 関数がコールできるかどうかを調べる """
     try:
@@ -47,10 +72,13 @@ def makedirs(dirpath: str, exist_ok: bool = False, remake: bool = False):
     if remake and os.path.isdir(dirpath): shutil.rmtree(dirpath)
     os.makedirs(dirpath, exist_ok = exist_ok)
 
-def get_args() -> dict:
+def get_args(args: str=None) -> dict:
     dict_ret = {}
-    args = sys.argv
-    dict_ret["__fname"] = args[0]
+    if args is None:
+        args = sys.argv
+        dict_ret["__fname"] = args[0]
+    else:
+        args = re.sub("\s+", " ", args).split(" ")
     for i, x in enumerate(args):
         if   x[:4] == "----":
             # この引数の後にはLISTで格納する

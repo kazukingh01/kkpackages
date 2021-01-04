@@ -722,12 +722,14 @@ class CocoManager:
 
 
     @classmethod
-    def json_to_df(cls, src):
+    def json_to_df(cls, src) -> (pd.DataFrame, dict):
         check_type(src, [str, dict])
         # json の load
         json_coco = {}
         if   type(src) == str:  json_coco = json.load(open(src))
         elif type(src) == dict: json_coco = src
+        if json_coco.get("licenses") is None or len(json_coco["licenses"]) == 0:
+            json_coco["licenses"] = [{'url': 'http://test', 'id': 0, 'name': 'test license'}]
         # json の構造定義
         df = pd.DataFrame(json_coco["images"])
         df.columns = ["images_"+x for x in df.columns]
@@ -740,7 +742,7 @@ class CocoManager:
         dfwk = pd.DataFrame(json_coco["categories"])
         dfwk.columns = ["categories_"+x for x in dfwk.columns]
         df = pd.merge(df, dfwk, how="left", left_on="annotations_category_id", right_on="categories_id")
-        return df
+        return df, json_coco
 
 
     def check_index(self):
@@ -826,24 +828,29 @@ class CocoManager:
 
 
     def add_json(self, src, root_image: str=None):
-        check_type(src, [str, dict])
-        json_coco = {}
-        if   type(src) == str:  json_coco = json.load(open(src))
-        elif type(src) == dict: json_coco = src
-        self.json = json_coco.copy()
-        if json_coco.get("licenses") is None or len(json_coco["licenses"]) == 0:
-            json_coco["licenses"] = [{'url': 'http://test', 'id': 0, 'name': 'test license'}]
+        df, json_coco = self.json_to_df(src)
         try:
             self.coco_info = json_coco["info"]
         except KeyError:
             logger.warning("'src' file or dictionary is not found 'info' key. so, skip this src.")
             self.coco_info = coco_info()
-        df = self.json_to_df(json_coco)
         if root_image is not None: df["images_coco_url"] = correct_dirpath(root_image) + df["images_file_name"]
         self.df_json = pd.concat([self.df_json, df], axis=0, ignore_index=True, sort=False)
         self.check_index()
         self.re_index()
     
+
+    def add_jsons(self, list_cocos: List[str], list_root_images: List[str]=None):
+        list_df = []
+        for i, src in enumerate(list_cocos):
+            logger.info(f"read coco json: {src}, root dir: {None if list_root_images is None else list_root_images[i]}")
+            df, _ = self.json_to_df(src)
+            if list_root_images is not None: df["images_coco_url"] = correct_dirpath(list_root_images[i]) + df["images_file_name"]
+            list_df.append(df)
+        self.df_json = pd.concat(list_df, axis=0, ignore_index=True, sort=False)
+        self.check_index()
+        self.re_index()
+
 
     def check_file_exist(self, img_dir: str=None):
         list_target = []
@@ -1256,8 +1263,8 @@ class Labelme2Coco:
         self.index_categories_name = {x:i for i, x in enumerate(categories_name)}
         self.keypoints = keypoints
         self.keypoints_belong = keypoints_belong
-        self.index_keypoints = {x:i for i, x in enumerate(keypoints)}
-        self.skelton   = skelton
+        self.index_keypoints = {x:i for i, x in enumerate(keypoints)} if keypoints is not None else {}
+        self.skelton = skelton
 
 
     def read_json(self, json_path: str) -> pd.DataFrame:

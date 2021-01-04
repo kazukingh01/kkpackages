@@ -5,31 +5,25 @@ import cv2
 from typing import List, Tuple
 import torch
 
-# detectron2
-import detectron2
+from kkimgaug.lib.aug_det2 import Mapper
+
+# detectron2 packages
 from detectron2.engine import DefaultTrainer, DefaultPredictor, HookBase
-from detectron2.data import build_detection_train_loader, DatasetCatalog, MetadataCatalog
-from detectron2.data.datasets import register_coco_instances
 from detectron2.config import get_cfg
 from detectron2 import model_zoo
-import detectron2.utils.comm as comm
-from detectron2.utils.visualizer import Visualizer
-from detectron2.utils.visualizer import ColorMode
-from detectron2.utils.logger import setup_logger
+from detectron2.data.datasets import register_coco_instances
+from detectron2.utils.visualizer import Visualizer, ColorMode
+from detectron2.data import build_detection_train_loader, DatasetCatalog, MetadataCatalog
 from detectron2.data.dataset_mapper import DatasetMapper
-from detectron2.data import detection_utils as utils
-from detectron2.data import transforms as T
+import detectron2.data.detection_utils as utils
+import detectron2.data.transforms as T
 from fvcore.common.config import CfgNode
-setup_logger()
-
-from fvcore.common.file_io import PathManager
-from PIL import Image
+import detectron2.utils.comm as comm
 
 # local package
 from kkimagemods.util.common import makedirs, correct_dirpath
 from kkimagemods.lib.coco import coco_info, CocoManager
 from kkimagemods.util.images import drow_bboxes, convert_seg_point_to_bool, fit_resize
-from imageaug import AugHandler, Augmenter as aug
 
 
 class MyDet2(DefaultTrainer):
@@ -39,13 +33,15 @@ class MyDet2(DefaultTrainer):
             dataset_name: str = None, coco_json_path: str=None, image_root: str=None,
             # train params
             cfg: CfgNode=None, max_iter: int=100, is_train: bool=True, aug_json_file_path: str=None, 
-            base_lr: float=0.01, num_workers: int=2, resume: bool=False, lr_steps: (int,int,)=None,
+            base_lr: float=0.01, batch_size: int=1, num_workers: int=3, resume: bool=False, 
+            lr_steps: (int,int,)=None, lr_warmup: int=1000, 
             # validation param
             validations: List[Tuple[str]]=None, valid_steps: int=100, valid_ndata: int=10,
             # train and test params
-            model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", weight_path: str=None, is_keyseg: bool=False,
+            model_zoo_path: str="COCO-Detection/faster_rcnn_R_50_FPN_1x.yaml", weight_path: str=None, 
+            is_keyseg: bool=False, is_bbox_only: bool=False, save_step: int=5000,
             classes: List[str] = None, keypoint_names: List[str] = None, keypoint_flip_map: List[Tuple[str]] = None,
-            input_size: tuple=(800, 1333), threshold: float=0.2, outdir: str="./output"
+            input_size: tuple=((640, 672, 704, 736, 768, 800), 1333), threshold: float=0.2, outdir: str="./output"
         ):
         # coco dataset
         self.dataset_name       = dataset_name
@@ -54,15 +50,24 @@ class MyDet2(DefaultTrainer):
         self.coco_json_path_org = coco_json_path
         self.image_root         = image_root
         self.is_train           = is_train
-        self.__register_coco_instances(self.dataset_name, self.coco_json_path, self.image_root) # Coco dataset setting
+        if (self.dataset_name is None or self.coco_json_path is None or self.image_root is None) == False:
+            self.__register_coco_instances(self.dataset_name, self.coco_json_path, self.image_root) # Coco dataset setting
         self.cfg                = cfg if cfg is not None else self.set_config(
             weight_path=weight_path, threshold=threshold, max_iter=max_iter, num_workers=num_workers, 
-            base_lr=base_lr, lr_steps=lr_steps, input_size=input_size, outdir=outdir
+            batch_size=batch_size, base_lr=base_lr, lr_steps=lr_steps, input_size=input_size, outdir=outdir
         )
         # cfg に対する追加の設定
         if is_keyseg:
             self.cfg.MODEL.MASK_ON     = True
             self.cfg.MODEL.KEYPOINT_ON = True
+        if is_bbox_only:
+            self.cfg.MODEL.MASK_ON     = False
+            self.cfg.MODEL.KEYPOINT_ON = False
+        self.cfg.INPUT.RANDOM_FLIP = "none"
+        self.cfg.SOLVER.CHECKPOINT_PERIOD = save_step
+        self.cfg.SOLVER.WARMUP_FACTOR = 1.0 / lr_warmup
+        self.cfg.SOLVER.WARMUP_ITERS = lr_warmup
+        self.cfg.SOLVER.WARMUP_METHOD = "linear"
         # classes は強制でセットする
         self.cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(classes)
         MetadataCatalog.get(self.dataset_name).thing_classes = classes
@@ -72,7 +77,7 @@ class MyDet2(DefaultTrainer):
             MetadataCatalog.get(self.dataset_name).keypoint_names = keypoint_names
             MetadataCatalog.get(self.dataset_name).keypoint_flip_map = keypoint_flip_map
             MetadataCatalog.get(self.dataset_name).keypoint_connection_rules = [(x[0], x[1], (255,0,0)) for x in keypoint_flip_map] # Visualizer の内部で使用している
-        self.mapper = None if aug_json_file_path is None else MyMapper(self.cfg, aug_json_file_path, is_train=self.is_train)
+        self.mapper = None if aug_json_file_path is None else Mapper(self.cfg, config=aug_json_file_path)
 
         if self.is_train:
             # train setting
@@ -115,7 +120,7 @@ class MyDet2(DefaultTrainer):
 
     def set_config(
         self, weight_path: str=None, threshold: float=0.2, max_iter: int=100, num_workers: int=2, 
-        base_lr: float=0.01, lr_steps: (int,int)=None, input_size: tuple=(800,1333,), outdir: str="./output"
+        batch_size: int=1, base_lr: float=0.01, lr_steps: (int,int)=None, input_size: tuple=(800,1333,), outdir: str="./output"
     ) -> CfgNode:
         """
         see https://detectron2.readthedocs.io/modules/config.html#detectron2.config.CfgNode
@@ -128,13 +133,13 @@ class MyDet2(DefaultTrainer):
         cfg.DATASETS.TEST  = (self.dataset_name, )
         cfg.DATALOADER.NUM_WORKERS = num_workers
         cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(self.model_zoo_path) if weight_path is None else weight_path
-        cfg.SOLVER.IMS_PER_BATCH   = num_workers
-        cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128 # faster, and good enough for this toy dataset (default: 512)
+        cfg.SOLVER.IMS_PER_BATCH = batch_size
+        cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 512 # faster, and good enough for this toy dataset (default: 512)
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = threshold if threshold is not None else 0.2  # set the testing threshold for this model
         cfg.INPUT.MIN_SIZE_TRAIN = input_size[0]
         cfg.INPUT.MAX_SIZE_TRAIN = input_size[1]
-        cfg.INPUT.MIN_SIZE_TEST = input_size[0]
-        cfg.INPUT.MAX_SIZE_TEST = input_size[1]
+        cfg.INPUT.MIN_SIZE_TEST  = input_size[0]
+        cfg.INPUT.MAX_SIZE_TEST  = input_size[1]
         if self.is_train:
             cfg.SOLVER.BASE_LR = base_lr # pick a good LR
             cfg.SOLVER.MAX_ITER = max_iter    # 300 iterations seems good enough for this toy dataset; you may need to train longer for a practical dataset
@@ -178,16 +183,17 @@ class MyDet2(DefaultTrainer):
                 _x1 = _x1 if _x1 >= 0 else 0
                 imgwk = img[_y1:_y2, _x1:_x2, :].copy()
                 output_list.append(imgwk)
-        elif type(_class) == str:
+        elif isinstance(_class, list) or isinstance(_class, str):
+            if isinstance(_class, str): _class = [_class]
             for i, index in enumerate(classes):
-                if MetadataCatalog.get(self.dataset_name).thing_classes[index] == _class:
+                if MetadataCatalog.get(self.dataset_name).thing_classes[index] in _class:
                     x1, y1, x2, y2 = ndf[i]
                     _y1, _y2, _x1, _x2 = int(y1)-padding, int(y2)+padding, int(x1)-padding, int(x2)+padding
                     _y1 = _y1 if _y1 >= 0 else 0
                     _x1 = _x1 if _x1 >= 0 else 0
                     imgwk = img[_y1:_y2, _x1:_x2, :].copy()
                     output_list.append(imgwk)
-        elif type(_class) == int:
+        elif isinstance(_class, int):
             x1, y1, x2, y2 = ndf[_class]
             _y1, _y2, _x1, _x2 = int(y1)-padding, int(y2)+padding, int(x1)-padding, int(x2)+padding
             _y1 = _y1 if _y1 >= 0 else 0
@@ -360,8 +366,8 @@ class MyDet2(DefaultTrainer):
 
         # 作り直したcocoで再度読み込みさせる
         self.coco_json_path = self.coco_json_path + ".cocomanager.json"
-        del DatasetCatalog. _REGISTERED[  self.dataset_name] # key を削除しないと再登録できない
-        del MetadataCatalog._NAME_TO_META[self.dataset_name] # key を削除しないと再登録できない
+        DatasetCatalog.remove(self.dataset_name)  # key を削除しないと再登録できない
+        MetadataCatalog.remove(self.dataset_name) # key を削除しないと再登録できない
         self.__register_coco_instances(self.dataset_name, self.coco_json_path, self.image_root)
         super().__init__(self.cfg)
         makedirs(outdir, exist_ok=True, remake=True)
@@ -391,8 +397,8 @@ class MyDet2(DefaultTrainer):
             count += 1
             if count > n_output: break
 
-        del DatasetCatalog. _REGISTERED[  self.dataset_name] # key を削除しないと再登録できない
-        del MetadataCatalog._NAME_TO_META[self.dataset_name] # key を削除しないと再登録できない
+        DatasetCatalog.remove(self.dataset_name)  # key を削除しないと再登録できない
+        MetadataCatalog.remove(self.dataset_name) # key を削除しないと再登録できない
         self.coco_json_path = self.coco_json_path_org
         self.__register_coco_instances(self.dataset_name, self.coco_json_path, self.image_root)
         super().__init__(self.cfg)
@@ -641,6 +647,67 @@ class MyDet2(DefaultTrainer):
         return df
 
 
+def create_model(args: dict):
+    """
+    Usage::
+        train.py
+            from kkutils.util.com import get_args
+            args = get_args()
+            model(args)
+        python train.py  --cocot ./train/coco.json --train ./train/ --outdir ./output --save 200 \
+        --dname mark ----classes bracket distribution_board distributor downlight interphone light outlet plumbing spotlight wiring \
+        --iter 5000 --batch 5 --njob 5 --model_zoo Misc/cascade_mask_rcnn_R_50_FPN_3x.yaml --aug ./config.json \
+        ----minsize 402 434 468 500 532 564 596 --maxsize 1033 --lr 0.01 --warmup 200 \
+        ---bbox --cocov ./test_crop/coco.json --valid ./test_crop/ --batchv 4
+    """
+    # load coco file
+    coco = CocoManager()
+    if args.get("cocot") is not None:
+        coco.add_json(args.get("cocot"))
+    outdir       = args.get("outdir") if args.get("outdir") is not None else "./output/"
+    imgdir_train = args.get("train")
+    imgdir_valid = args.get("valid")
+    weight_path  = args.get("weight") # 設定がなかったらNoneになる
+    model_zoo    = "COCO-Detection/faster_rcnn_R_50_FPN_3x.yaml" if args.get("model_zoo") is None else args.get("model_zoo")
+    classes      = args.get("classes") if args.get("classes") is not None else [args.get("dname")]
+    input_size   = None
+    if args.get("train") is not None:
+        input_size = (
+            tuple([int(x) for x in args.get("minsize")]) if args.get("minsize") is not None and isinstance(args.get("minsize"), list) else (int(args.get("minsize")) if args.get("minsize") is not None and isinstance(args.get("minsize"), str) else (640, 672, 704, 736, 768, 800, 832, 864, 896, 928, 960)), 
+            tuple([int(x) for x in args.get("maxsize")]) if args.get("maxsize") is not None and isinstance(args.get("maxsize"), list) else (int(args.get("maxsize")) if args.get("maxsize") is not None and isinstance(args.get("maxsize"), str) else 1333)
+        )
+    else:
+        input_size = (
+            tuple([int(x) for x in args.get("minsize")]) if args.get("minsize") is not None and isinstance(args.get("minsize"), list) else (int(args.get("minsize")) if args.get("minsize") is not None and isinstance(args.get("minsize"), str) else 800), 
+            tuple([int(x) for x in args.get("maxsize")]) if args.get("maxsize") is not None and isinstance(args.get("maxsize"), list) else (int(args.get("maxsize")) if args.get("maxsize") is not None and isinstance(args.get("maxsize"), str) else 1333)
+        )
+    det2 = MyDet2(
+        dataset_name=args.get("dname") if args.get("dname") is not None else "mydataset",
+        coco_json_path=args.get("cocot"),
+        image_root=imgdir_train,
+        outdir=outdir,
+        model_zoo_path=model_zoo,
+        input_size=input_size, 
+        weight_path=weight_path,
+        resume=False if args.get("resume") is None else True,
+        classes=classes,
+        threshold=0.8 if args.get("thre") is None else float(args.get("thre")), 
+        max_iter=1000 if args.get("iter") is None else int(args.get("iter")),
+        is_train=True if args.get("train") is not None else False, 
+        is_bbox_only=False if args.get("bbox") is None else True,
+        save_step=5000 if args.get("save") is None else int(args.get("save")),
+        aug_json_file_path=None if args.get("aug") is None else args.get("aug"), 
+        base_lr=0.001 if args.get("lr") is None else float(args.get("lr")),
+        lr_steps=None if args.get("step") is None else (int(args.get("step")[0]), int(args.get("step")[1]), ),
+        lr_warmup=1000 if args.get("warmup") is None else int(args.get("warmup")),
+        batch_size=2 if args.get("batch") is None else int(args.get("batch")), 
+        num_workers=2 if args.get("njob") is None else int(args.get("njob")),
+        validations=[("valid1", args.get("cocov"), imgdir_valid), ] if args.get("cocov") is not None else None, 
+        valid_steps=100, valid_ndata=int(args.get("batchv")) if args.get("batchv") is not None else 1,
+    )
+    return det2
+
+
 
 class Validator(HookBase):
     def __init__(self, cfg: CfgNode, dataset_name: str, trainer: DefaultTrainer, steps: int=10, ndata: int=5):
@@ -648,19 +715,22 @@ class Validator(HookBase):
         self.cfg = cfg.clone()
         self.cfg.DATASETS.TRAIN = (dataset_name, )
         self._loader = iter(build_detection_train_loader(self.cfg))
-        self.trainer: DefaultTrainer = trainer
+        self.trainer = trainer
         self.steps = steps
         self.ndata = ndata
         self.loss_dict = {}
+        self.data_time = 0
         
     def before_step(self):
         # before に入れないと、after step の後の storage.step で storage._latest~~ が初期化されてしまう
-        self.trainer._write_metrics(self.loss_dict)
+        if self.loss_dict:
+            self.trainer._trainer._write_metrics(self.loss_dict, self.data_time)
 
     def after_step(self):
         if self.trainer.iter > 0 and self.trainer.iter % self.steps == 0:
             list_dict = []
             # self.trainer.model.eval() # これをすると model(data) の動作が変わるのでやらない。
+            start = time.perf_counter()
             with torch.no_grad():
                 for _ in range(self.ndata):
                     data = next(self._loader)
@@ -673,115 +743,10 @@ class Validator(HookBase):
             for key in list_dict[0].keys():
                 loss_dict[key] = np.mean([dictwk[key] for dictwk in list_dict])
             loss_dict = {
-                self.cfg.DATASETS.TRAIN[0] + "_" + k: v.item() for k, v in comm.reduce_dict(loss_dict).items()
+                self.cfg.DATASETS.TRAIN[0] + "_" + k: torch.tensor(v.item()) for k, v in comm.reduce_dict(loss_dict).items()
             }
             self.loss_dict = loss_dict
-
-
-
-class MyMapper(DatasetMapper):
-    def __init__(self, cfg, json_file_path, is_train=True):
-        super().__init__(cfg, is_train=is_train)
-        self.aug_handler = AugHandler.load_from_path(json_file_path)
-        if is_train: 
-            self.tfm_gens = self.tfm_gens[:-1]
-            #self.tfm_gens.insert(0, T.RandomFlip(prob=0.5, horizontal=True,  vertical=False))
-            self.tfm_gens.insert(0, T.RandomCrop("relative_range", (0.8, 1.0)))
-            self.tfm_gens.insert(0, T.RandomRotation([0, 90, 180, 270], sample_style="choice") )
-    
-    def __call__(self, dataset_dict):
-        """
-        Args:
-            dataset_dict (dict): Metadata of one image, in Detectron2 Dataset format.
-
-        Returns:
-            dict: a format that builtin models in detectron2 accept
-        """
-        dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
-        # USER: Write your own image loading if it's not from a file
-        image = utils.read_image(dataset_dict["file_name"], format=self.img_format)
-        utils.check_image_size(dataset_dict, image)
-
-        ### my code ###
-        ## segmentaion の annotation を一旦退避して、後で追加する
-        seg_bk = [dictwk["segmentation"] for dictwk in dataset_dict["annotations"]]
-        for i in range(len(dataset_dict["annotations"])):
-            dataset_dict["annotations"][i].pop("segmentation")
-        image, dataset_dict = self.aug_handler(image=image, dataset_dict_detectron=dataset_dict)
-        for i in range(len(dataset_dict["annotations"])):
-            dataset_dict["annotations"][i]["segmentation"] = seg_bk[i]
-        ### my code ###
-
-        if "annotations" not in dataset_dict:
-            image, transforms = T.apply_transform_gens(
-                ([self.crop_gen] if self.crop_gen else []) + self.tfm_gens, image
-            )
-        else:
-            # Crop around an instance if there are instances in the image.
-            # USER: Remove if you don't use cropping
-            if self.crop_gen:
-                crop_tfm = utils.gen_crop_transform_with_instance(
-                    self.crop_gen.get_crop_size(image.shape[:2]),
-                    image.shape[:2],
-                    np.random.choice(dataset_dict["annotations"]),
-                )
-                image = crop_tfm.apply_image(image)
-            image, transforms = T.apply_transform_gens(self.tfm_gens, image)
-            if self.crop_gen:
-                transforms = crop_tfm + transforms
-
-        image_shape = image.shape[:2]  # h, w
-
-        # Pytorch's dataloader is efficient on torch.Tensor due to shared-memory,
-        # but not efficient on large generic data structures due to the use of pickle & mp.Queue.
-        # Therefore it's important to use torch.Tensor.
-        dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
-
-        # USER: Remove if you don't use pre-computed proposals.
-        if self.load_proposals:
-            utils.transform_proposals(
-                dataset_dict, image_shape, transforms, self.min_box_side_len, self.proposal_topk
-            )
-
-        if not self.is_train:
-            # USER: Modify this if you want to keep them for some reason.
-            dataset_dict.pop("annotations", None)
-            dataset_dict.pop("sem_seg_file_name", None)
-            return dataset_dict
-
-        if "annotations" in dataset_dict:
-            # USER: Modify this if you want to keep them for some reason.
-            for anno in dataset_dict["annotations"]:
-                if not self.mask_on:
-                    anno.pop("segmentation", None)
-                if not self.keypoint_on:
-                    anno.pop("keypoints", None)
-
-            # USER: Implement additional transformations if you have other types of data
-            annos = [
-                utils.transform_instance_annotations(
-                    obj, transforms, image_shape, keypoint_hflip_indices=self.keypoint_hflip_indices
-                )
-                for obj in dataset_dict.pop("annotations")
-                if obj.get("iscrowd", 0) == 0
-            ]
-            instances = utils.annotations_to_instances(
-                annos, image_shape, mask_format=self.mask_format
-            )
-            # Create a tight bounding box from masks, useful when image is cropped
-            if self.crop_gen and instances.has("gt_masks"):
-                instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
-            dataset_dict["instances"] = utils.filter_empty_instances(instances)
-
-        # USER: Remove if you don't do semantic/panoptic segmentation.
-        if "sem_seg_file_name" in dataset_dict:
-            with PathManager.open(dataset_dict.pop("sem_seg_file_name"), "rb") as f:
-                sem_seg_gt = Image.open(f)
-                sem_seg_gt = np.asarray(sem_seg_gt, dtype="uint8")
-            sem_seg_gt = transforms.apply_segmentation(sem_seg_gt)
-            sem_seg_gt = torch.as_tensor(sem_seg_gt.astype("long"))
-            dataset_dict["sem_seg"] = sem_seg_gt
-        return dataset_dict
+            self.data_time = time.perf_counter() - start
 
 
 
