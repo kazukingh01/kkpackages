@@ -188,6 +188,7 @@ def _train(
     func_train=None,
     **kwargs
 ):
+    logger.info("START")
     dataset = KkLgbDataset(x_train)
     dataset.set_culstom_label(y_train)
     if not (isinstance(x_valid, list) or isinstance(x_valid, tuple)):
@@ -216,6 +217,7 @@ def _train(
         fobj =fobj, feval=feval, evals_result=evals_result,
         **kwargs
     )
+    logger.info("END")
     return obj
 
 
@@ -226,7 +228,8 @@ def train(
     loss_func_eval: Callable[[float, float], float]=None, 
     **kwargs
 ):
-    return _train(
+    logger.info("START")
+    obj = _train(
         params, x_train, y_train, loss_func, *args, 
         x_valid=x_valid, y_valid=y_valid,
         loss_func_grad=loss_func_grad,
@@ -234,6 +237,8 @@ def train(
         func_train=lgb.train,
         **kwargs
     )
+    logger.info("END")
+    return obj
 
 
 def autotuner(
@@ -243,7 +248,8 @@ def autotuner(
     loss_func_eval: Callable[[float, float], float]=None, 
     **kwargs
 ):
-    return _train(
+    logger.info("START")
+    obj = _train(
         params, x_train, y_train, *args, 
         x_valid=x_valid, y_valid=y_valid,
         loss_func=loss_func, loss_func_grad=loss_func_grad,
@@ -251,6 +257,8 @@ def autotuner(
         func_train=lgbtune.train,
         **kwargs
     )
+    logger.info("END")
+    return obj
 
 
 def tune(
@@ -261,6 +269,7 @@ def tune(
     loss_func_eval: Callable[[float, float], float]=None, 
     **kwargs
 ):
+    logger.info("START")
     import optuna
     from kkutils.util.ml import create_optuna_params
     params = {
@@ -330,4 +339,5 @@ def tune(
         if val[0] == "const": dict_param_ret[key] = val[-1]
     for key, val in  study.best_params.items():
         dict_param_ret[key] = val
+    logger.info("END")
     return df_optuna, dict_param_ret
