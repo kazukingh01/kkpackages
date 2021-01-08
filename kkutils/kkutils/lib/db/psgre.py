@@ -129,7 +129,7 @@ class Psgre:
     def execute_copy_from_df(
             self, df: pd.DataFrame, tblname: str, system_colname_list: List[str] = ["sys_updated"], 
             filename: str="./postgresql_copy.csv", encoding: str="utf8", n_round: int=3, 
-            str_null :str="%%null%%"
+            str_null :str="%%null%%", check_columns: bool=True
     ):
         """
         Params::
@@ -140,10 +140,15 @@ class Psgre:
 
         # まずテーブルのカラムを取ってくる
         dfcol = self.read_table_layout(tblname, system_colname_list=system_colname_list)
-        ndf = values_not_include(df.columns, dfcol["colname"].values)
-        if ndf.shape[0] > 0:
-            self.raise_error(f"{ndf} columns is not included in df: {df.columns}.")
-
+        if check_columns:
+            ndf = values_not_include(df.columns, dfcol["colname"].values)
+            if ndf.shape[0] > 0:
+                self.raise_error(f"{ndf} columns is not included in df: {df.columns}.")
+        else:
+            df = df.copy()
+            for x in dfcol["colname"].values:
+                if (df.columns == x).sum() == 0:
+                    df[x] = float("nan")
         df = df[dfcol["colname"].values].copy()
         # df を文字列に返還
         df = to_string_all_columns(df, n_round=n_round, rep_nan=str_null, strtmp="-9999999")
