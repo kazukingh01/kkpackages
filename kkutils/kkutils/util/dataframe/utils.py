@@ -4,7 +4,7 @@ import logging
 from typing import List
 
 # local
-from kkpackage.util.common import check_type, correct_dirpath
+from kkutils.util.com import check_type, correct_dirpath
 
 
 __all__ = [

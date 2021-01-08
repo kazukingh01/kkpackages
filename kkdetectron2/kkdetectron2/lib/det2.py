@@ -74,6 +74,7 @@ class MyDet2(DefaultTrainer):
         if keypoint_names is not None:
             self.cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = len(keypoint_names)
             # Key point の metadata を set
+            if keypoint_flip_map is None: keypoint_flip_map = []
             MetadataCatalog.get(self.dataset_name).keypoint_names = keypoint_names
             MetadataCatalog.get(self.dataset_name).keypoint_flip_map = keypoint_flip_map
             MetadataCatalog.get(self.dataset_name).keypoint_connection_rules = [(x[0], x[1], (255,0,0)) for x in keypoint_flip_map] # Visualizer の内部で使用している
@@ -691,6 +692,7 @@ def create_model(args: dict):
         weight_path=weight_path,
         resume=False if args.get("resume") is None else True,
         classes=classes,
+        keypoint_names=args.get("kptname"),
         threshold=0.8 if args.get("thre") is None else float(args.get("thre")), 
         max_iter=1000 if args.get("iter") is None else int(args.get("iter")),
         is_train=True if args.get("train") is not None else False, 
